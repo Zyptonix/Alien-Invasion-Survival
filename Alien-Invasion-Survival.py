@@ -33,9 +33,73 @@ player_speed = 4
 current_score = 0
 game_time = 0
 
+# Weapon system variables
+bullets = []  # List to store active bullets
+weapon_cooldown = 0
+max_weapon_cooldown = 15  # Frames between shots
+bullet_speed = 8
+muzzle_flash_timer = 0
+
 # Simple animation variables for UI effects
 ui_pulse = 0
 star_positions = []
+
+class Bullet:
+    def __init__(self, x, y, z, angle):
+        self.x = x
+        self.y = y
+        self.z = z
+        self.angle = angle
+        self.speed = bullet_speed
+        self.life = 150  # Bullet lifetime in frames
+        self.active = True
+    
+    def update(self):
+        if not self.active:
+            return
+        
+        # Move bullet forward
+        self.x += math.cos(math.radians(self.angle)) * self.speed
+        self.y += math.sin(math.radians(self.angle)) * self.speed
+        
+        # Decrease lifetime
+        self.life -= 1
+        if self.life <= 0:
+            self.active = False
+        
+        # Check boundaries
+        if abs(self.x) > GRID_LENGTH * 1.5 or abs(self.y) > GRID_LENGTH * 1.5:
+            self.active = False
+    
+    def draw(self):
+        if not self.active:
+            return
+        
+        glPushMatrix()
+        glTranslatef(self.x, self.y, self.z)
+        
+        # Draw glowing bullet - using basic sphere
+        glow = 0.8 + 0.2 * math.sin(game_time * 0.5)
+        glColor3f(0, glow, 1)  # Cyan energy bullet
+        
+        # Main bullet core
+        gluSphere(gluNewQuadric(), 1.5, 8, 6)
+        
+        # Energy trail effect - simplified
+        glColor3f(0.3, 0.6, 1)
+        for i in range(3):
+            trail_offset = i * 3
+            trail_x = self.x - math.cos(math.radians(self.angle)) * trail_offset
+            trail_y = self.y - math.sin(math.radians(self.angle)) * trail_offset
+            
+            glPushMatrix()
+            glTranslatef(trail_x - self.x, trail_y - self.y, 0)
+            alpha = 0.6 - i * 0.2
+            glColor3f(0, alpha, alpha * 1.5)
+            gluSphere(gluNewQuadric(), 1.0 - i * 0.2, 6, 4)
+            glPopMatrix()
+        
+        glPopMatrix()
 
 # Initialize stars for background effect
 def init_stars():
@@ -65,7 +129,6 @@ def draw_space_grid():
     grid_size = 50
     
     # Main grid in cyan
-    glColor3f(*NEON_CYAN)
     glColor3f(0.3, 0.6, 1.0)  # Softer blue-cyan
     glBegin(GL_LINES)
     
@@ -137,6 +200,69 @@ def draw_arena_boundaries():
     
     glLineWidth(1)
 
+def fire_weapon():
+    """Create a new bullet at player position"""
+    global weapon_cooldown, muzzle_flash_timer
+    
+    if weapon_cooldown <= 0:
+        # Calculate bullet spawn position (front of ship)
+        spawn_distance = 15
+        bullet_x = player_pos[0] + math.cos(math.radians(player_angle)) * spawn_distance
+        bullet_y = player_pos[1] + math.sin(math.radians(player_angle)) * spawn_distance
+        bullet_z = player_pos[2]
+        
+        # Create new bullet
+        new_bullet = Bullet(bullet_x, bullet_y, bullet_z, player_angle)
+        bullets.append(new_bullet)
+        
+        # Set cooldown and muzzle flash
+        weapon_cooldown = max_weapon_cooldown
+        muzzle_flash_timer = 5
+        
+        return True
+    return False
+
+def draw_bullets():
+    """Draw all active bullets and update them"""
+    global bullets
+    
+    # Update and draw bullets
+    for bullet in bullets[:]:  # Use slice to avoid modification during iteration
+        bullet.update()
+        if bullet.active:
+            bullet.draw()
+        else:
+            bullets.remove(bullet)
+
+def draw_weapon_effects():
+    """Draw weapon muzzle flash and other effects"""
+    global muzzle_flash_timer
+    
+    if muzzle_flash_timer > 0:
+        # Draw muzzle flash at weapon positions
+        flash_intensity = muzzle_flash_timer / 5.0
+        
+        glPushMatrix()
+        glTranslatef(player_pos[0], player_pos[1], player_pos[2])
+        glRotatef(player_angle, 0, 0, 1)
+        
+        # Left weapon muzzle flash
+        glColor3f(1, flash_intensity, 0)  # Orange flash
+        glPushMatrix()
+        glTranslatef(-6, 12, -1)
+        gluSphere(gluNewQuadric(), 2 * flash_intensity, 8, 6)
+        glPopMatrix()
+        
+        # Right weapon muzzle flash
+        glPushMatrix()
+        glTranslatef(6, 12, -1)
+        gluSphere(gluNewQuadric(), 2 * flash_intensity, 8, 6)
+        glPopMatrix()
+        
+        glPopMatrix()
+        
+        muzzle_flash_timer -= 1
+
 def draw_3d_player():
     """Draw a fully 3D futuristic spaceship"""
     glPushMatrix()
@@ -147,7 +273,7 @@ def draw_3d_player():
     glColor3f(0.2, 0.8, 1.0)  # Bright cyan hull
     glPushMatrix()
     glScalef(1.5, 3.0, 0.8)
-    glutSolidSphere(8, 12, 8)
+    gluSphere(gluNewQuadric(), 8, 12, 8)
     glPopMatrix()
     
     # === COCKPIT - Forward section ===
@@ -155,7 +281,7 @@ def draw_3d_player():
     glPushMatrix()
     glTranslatef(0, 12, 3)
     glScalef(0.8, 1.2, 0.6)
-    glutSolidSphere(6, 10, 8)
+    gluSphere(gluNewQuadric(), 6, 10, 8)
     glPopMatrix()
     
     # === WINGS - Left and Right ===
@@ -199,20 +325,20 @@ def draw_3d_player():
     glColor3f(0, glow, 1)
     glPushMatrix()
     glTranslatef(-8, -18, 0)
-    glutSolidSphere(4, 8, 6)
+    gluSphere(gluNewQuadric(), 4, 8, 6)
     glPopMatrix()
     
     # Right engine glow
     glPushMatrix()
     glTranslatef(8, -18, 0)
-    glutSolidSphere(4, 8, 6)
+    gluSphere(gluNewQuadric(), 4, 8, 6)
     glPopMatrix()
     
     # Central engine boost
     glColor3f(glow, glow * 0.8, 1)
     glPushMatrix()
     glTranslatef(0, -16, 1)
-    glutSolidSphere(2.5, 8, 6)
+    gluSphere(gluNewQuadric(), 2.5, 8, 6)
     glPopMatrix()
     
     # === WEAPON MOUNTS ===
@@ -242,7 +368,7 @@ def draw_3d_player():
     # Left wingtip light
     glPushMatrix()
     glTranslatef(-15, -2, 1)
-    glutSolidSphere(1.2, 6, 6)
+    gluSphere(gluNewQuadric(), 1.2, 6, 6)
     glPopMatrix()
     
     # Right wingtip light (green)
@@ -253,7 +379,7 @@ def draw_3d_player():
     
     glPushMatrix()
     glTranslatef(15, -2, 1)
-    glutSolidSphere(1.2, 6, 6)
+    gluSphere(gluNewQuadric(), 1.2, 6, 6)
     glPopMatrix()
     
     # === COCKPIT DETAILS ===
@@ -262,7 +388,7 @@ def draw_3d_player():
     glPushMatrix()
     glTranslatef(0, 15, 4)
     glScalef(0.6, 0.8, 0.3)
-    glutSolidSphere(4, 8, 6)
+    gluSphere(gluNewQuadric(), 4, 8, 6)
     glPopMatrix()
     
     # === HULL DETAILS ===
@@ -291,12 +417,6 @@ def draw_3d_player():
     
     glPopMatrix()
 
-def draw_ui_panel(x, y, width, height, color):
-    """Draw a futuristic UI panel background"""
-    # We'll simulate panels using text backgrounds and borders
-    # Since we can only use basic GL functions, we'll create visual separation
-    pass  # Will be implemented through strategic text placement and colors
-
 def draw_space_hud():
     """Draw space-themed HUD with futuristic styling"""
     global ui_pulse
@@ -321,10 +441,16 @@ def draw_space_hud():
     draw_text(15, 720, f"HULL INTEGRITY: {int(health_ratio * 100)}%", GLUT_BITMAP_HELVETICA_12)
     draw_text(15, 700, f"STATUS: {status_text}", GLUT_BITMAP_HELVETICA_12)
     
-    # Energy/Heat simulation
-    glColor3f(*NEON_CYAN)
-    draw_text(15, 680, f"ENERGY: 100%", GLUT_BITMAP_HELVETICA_12)
-    draw_text(15, 660, f"WEAPONS: ONLINE", GLUT_BITMAP_HELVETICA_12)
+    # Weapon status
+    if weapon_cooldown > 0:
+        glColor3f(*WARNING_RED)
+        weapon_status = "CHARGING"
+    else:
+        glColor3f(*NEON_GREEN)
+        weapon_status = "READY"
+    
+    draw_text(15, 680, f"WEAPONS: {weapon_status}", GLUT_BITMAP_HELVETICA_12)
+    draw_text(15, 660, f"ENERGY: 100%", GLUT_BITMAP_HELVETICA_12)
     
     # === CENTER TOP - MISSION INFO ===
     glColor3f(*NEON_PINK)
@@ -343,13 +469,13 @@ def draw_space_hud():
     glColor3f(*ALIEN_GREEN)
     draw_text(720, 720, "ENEMIES: 0 DETECTED", GLUT_BITMAP_HELVETICA_12)
     draw_text(720, 700, "THREAT LEVEL: LOW", GLUT_BITMAP_HELVETICA_12)
-    draw_text(720, 680, "SHIELDS: INACTIVE", GLUT_BITMAP_HELVETICA_12)
+    draw_text(720, 680, f"PROJECTILES: {len(bullets)}", GLUT_BITMAP_HELVETICA_12)
     
     # === BOTTOM LEFT - CONTROLS ===
     glColor3f(0.7, 0.7, 1)
     draw_text(15, 150, "=== CONTROLS ===", GLUT_BITMAP_HELVETICA_12)
     draw_text(15, 130, "WASD: Navigate Ship", GLUT_BITMAP_HELVETICA_10)
-    draw_text(15, 110, "MOUSE: Fire Weapons", GLUT_BITMAP_HELVETICA_10)
+    draw_text(15, 110, "SPACE: Fire Weapons", GLUT_BITMAP_HELVETICA_10)
     draw_text(15, 90, "Q/E: Evasive Maneuvers", GLUT_BITMAP_HELVETICA_10)
     draw_text(15, 70, "ARROWS: Camera Control", GLUT_BITMAP_HELVETICA_10)
     
@@ -410,6 +536,9 @@ def keyboardListener(key, x, y):
     if key == b'd':  # Rotate right
         player_angle -= 3
     
+    if key == b' ':  # Spacebar - Fire weapon
+        fire_weapon()
+    
     # Future: Add evasion, special abilities
     if key == b'q':  # Left evasion (placeholder)
         pass
@@ -437,8 +566,7 @@ def specialKeyListener(key, x, y):
 def mouseListener(button, state, x, y):
     """Handles mouse inputs for firing"""
     if button == GLUT_LEFT_BUTTON and state == GLUT_DOWN:
-        # Future: Add bullet firing
-        pass
+        fire_weapon()
 
 def setupCamera():
     """Configure camera with cinematic angle"""
@@ -457,8 +585,13 @@ def setupCamera():
 
 def idle():
     """Continuous updates"""
-    global game_time
+    global game_time, weapon_cooldown
     game_time += 1
+    
+    # Update weapon cooldown
+    if weapon_cooldown > 0:
+        weapon_cooldown -= 1
+    
     # Score will only increase from specific actions:
     # - Killing aliens
     # - Surviving waves
@@ -483,6 +616,8 @@ def showScreen():
     
     # Draw game objects
     draw_3d_player()
+    draw_bullets()  # Draw bullets
+    draw_weapon_effects()  # Draw muzzle flash and other effects
     
     # Draw UI
     draw_space_hud()
@@ -493,15 +628,13 @@ def main():
     init_stars()
     
     glutInit()
-    glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH)
+    glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH)  
     glutInitWindowSize(1000, 800)
     glutInitWindowPosition(0, 0)
     glutCreateWindow(b"Alien Invasion Survival - Space Combat")
     
-    glEnable(GL_DEPTH_TEST)
-    glEnable(GL_BLEND)
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-    
+    glEnable(GL_DEPTH_TEST)  # Allowed exception
+
     glutDisplayFunc(showScreen)
     glutKeyboardFunc(keyboardListener)
     glutSpecialFunc(specialKeyListener)
@@ -509,6 +642,7 @@ def main():
     glutIdleFunc(idle)
     
     glutMainLoop()
+
 
 if __name__ == "__main__":
     main()
