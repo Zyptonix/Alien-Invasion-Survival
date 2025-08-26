@@ -44,6 +44,16 @@ muzzle_flash_timer = 0
 ui_pulse = 0
 star_positions = []
 
+# Evasion system variables
+is_evading = False
+evade_timer = 0
+evade_cooldown = 0
+evade_direction = 0  # -1 = left, +1 = right
+EVADE_DISTANCE = 40
+EVADE_DURATION = 10   # frames
+EVADE_COOLDOWN_MAX = 50  # frames before next evade
+
+
 class Bullet:
     def __init__(self, x, y, z, angle):
         self.x = x
@@ -268,6 +278,13 @@ def draw_3d_player():
     glPushMatrix()
     glTranslatef(player_pos[0], player_pos[1], player_pos[2])
     glRotatef(player_angle, 0, 0, 1)
+
+    # --- Evasion visual feedback ---
+    if is_evading:
+        glColor3f(1, 1, 0.3)  # Yellowish glow flash
+    else:
+        glColor3f(0.2, 0.8, 1.0)  # Normal bright cyan hull
+
     
     # === MAIN HULL - 3D Fuselage ===
     glColor3f(0.2, 0.8, 1.0)  # Bright cyan hull
@@ -512,10 +529,9 @@ def draw_text(x, y, text, font=GLUT_BITMAP_HELVETICA_12):
     glMatrixMode(GL_MODELVIEW)
 
 def keyboardListener(key, x, y):
-    """Handles keyboard inputs for player movement"""
-    global player_pos, player_angle
+    global player_pos, player_angle, is_evading, evade_timer, evade_cooldown, evade_direction
     
-    # Movement with boundary checking
+    # Movement
     if key == b'w':  # Forward
         new_x = player_pos[0] + math.cos(math.radians(player_angle)) * player_speed
         new_y = player_pos[1] + math.sin(math.radians(player_angle)) * player_speed
@@ -539,12 +555,19 @@ def keyboardListener(key, x, y):
     if key == b' ':  # Spacebar - Fire weapon
         fire_weapon()
     
-    # Future: Add evasion, special abilities
-    if key == b'q':  # Left evasion (placeholder)
-        pass
+    # --- NEW: Evasion ---
+    if key == b'q' and evade_cooldown <= 0 and not is_evading:  # Left dodge
+        is_evading = True
+        evade_timer = EVADE_DURATION
+        evade_cooldown = EVADE_COOLDOWN_MAX
+        evade_direction = -1
     
-    if key == b'e':  # Right evasion (placeholder)
-        pass
+    if key == b'e' and evade_cooldown <= 0 and not is_evading:  # Right dodge
+        is_evading = True
+        evade_timer = EVADE_DURATION
+        evade_cooldown = EVADE_COOLDOWN_MAX
+        evade_direction = 1
+
 
 def specialKeyListener(key, x, y):
     """Handles special key inputs for camera control"""
@@ -584,20 +607,30 @@ def setupCamera():
     gluLookAt(x, y, z, target_x, target_y, 0, 0, 0, 1)
 
 def idle():
-    """Continuous updates"""
-    global game_time, weapon_cooldown
+    global game_time, weapon_cooldown, is_evading, evade_timer, evade_cooldown
+    
     game_time += 1
     
-    # Update weapon cooldown
+    # Weapon cooldown
     if weapon_cooldown > 0:
         weapon_cooldown -= 1
     
-    # Score will only increase from specific actions:
-    # - Killing aliens
-    # - Surviving waves
-    # - Collecting power-ups
-    # - Time-based survival bonus (maybe every 10 seconds)
+    # Evasion update
+    if is_evading:
+        # Quick sidestep perpendicular to facing direction
+        angle_rad = math.radians(player_angle + 90 * evade_direction)
+        player_pos[0] += math.cos(angle_rad) * (EVADE_DISTANCE / EVADE_DURATION)
+        player_pos[1] += math.sin(angle_rad) * (EVADE_DISTANCE / EVADE_DURATION)
+        
+        evade_timer -= 1
+        if evade_timer <= 0:
+            is_evading = False
+    
+    if evade_cooldown > 0:
+        evade_cooldown -= 1
+    
     glutPostRedisplay()
+
 
 def showScreen():
     """Main display function with space theme"""
