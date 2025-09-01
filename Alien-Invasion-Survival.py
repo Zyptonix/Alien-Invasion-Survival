@@ -61,6 +61,14 @@ ENEMY_SPEED = 0.35           # slowed down from 0.6
 ENEMY_RADIUS = 7.0           # slightly larger to feel fairer
 TARGET_ENEMY_COUNT = 5       # keep this many enemies alive (auto-respawn)
 
+# Overheat system
+heat_level = 0
+heat_max = 100
+heat_per_shot = 12
+heat_cool_rate = 1
+overheated = False
+
+
 # =============================
 # Classes
 # =============================
@@ -258,18 +266,28 @@ def draw_arena_boundaries():
 # Weapon / bullets
 # =============================
 def fire_weapon():
-    """Spawn bullet from the NOSE (front-center) aligned with ship facing."""
-    global weapon_cooldown, muzzle_flash_timer
-    if weapon_cooldown > 0:
+    global weapon_cooldown, muzzle_flash_timer, heat_level, overheated
+    if weapon_cooldown > 0 or overheated:
         return False
-    nose_forward = 18.0  # a bit ahead of the cockpit
+
+
+    nose_forward = 18.0
     bx = player_pos[0] + math.cos(math.radians(player_angle)) * nose_forward
     by = player_pos[1] + math.sin(math.radians(player_angle)) * nose_forward
     bz = player_pos[2]
     bullets.append(Bullet(bx, by, bz, player_angle))
+
     weapon_cooldown = max_weapon_cooldown
     muzzle_flash_timer = 5
+
+    # Add heat
+    heat_level += heat_per_shot
+    if heat_level >= heat_max:
+        overheated = True
+        heat_level = heat_max
+
     return True
+
 
 def _segment_point_dist2(x1, y1, x2, y2, px, py):
     """Squared distance from point P to segment [P1,P2] in 2D."""
@@ -462,6 +480,14 @@ def draw_space_hud():
     draw_text(15, 90,  "Q/E: Evasive Maneuvers", GLUT_BITMAP_HELVETICA_10)
     draw_text(15, 70,  "ARROWS: Camera Control", GLUT_BITMAP_HELVETICA_10)
 
+    # Heat status
+    if overheated:
+        glColor3f(1.0, 0.2, 0.2)
+        draw_text(15, 640, "WEAPON: OVERHEATED!", GLUT_BITMAP_HELVETICA_12)
+    else:
+        glColor3f(*ENERGY_YELLOW)
+        draw_text(15, 640, f"HEAT: {int(heat_level)} / {heat_max}", GLUT_BITMAP_HELVETICA_12)
+
 # =============================
 # Input
 # =============================
@@ -521,20 +547,27 @@ def setupCamera():
     gluLookAt(x, y, z, player_pos[0], player_pos[1], 0.0, 0.0, 0.0, 1.0)
 
 def idle():
-    global game_time, weapon_cooldown, is_evading, evade_timer, evade_cooldown
+    global game_time, weapon_cooldown, heat_level, overheated, evade_timer, is_evading, evade_cooldown
     game_time += 1
 
-    # ROF cooldown
     if weapon_cooldown > 0:
         weapon_cooldown -= 1
 
-    # Evasion slide (perpendicular to facing)
+    # Cool down heat each frame
+    if heat_level > 0:
+        heat_level -= heat_cool_rate
+        if heat_level < 0:
+            heat_level = 0
+    # Reset overheated if cooled enough
+    if overheated and heat_level <= (heat_max * 0.5):
+        overheated = False
+
+    # Evasion update...
     if is_evading:
         angle_rad = math.radians(player_angle + 90 * evade_direction)
         step = EVADE_DISTANCE / float(EVADE_DURATION)
         player_pos[0] += math.cos(angle_rad) * step
         player_pos[1] += math.sin(angle_rad) * step
-        # clamp
         player_pos[0] = max(-GRID_LENGTH + 30, min(GRID_LENGTH - 30, player_pos[0]))
         player_pos[1] = max(-GRID_LENGTH + 30, min(GRID_LENGTH - 30, player_pos[1]))
         evade_timer -= 1
@@ -543,10 +576,9 @@ def idle():
     if evade_cooldown > 0:
         evade_cooldown -= 1
 
-    # Enemies
     update_enemies()
-
     glutPostRedisplay()
+
 
 def showScreen():
     glClearColor(*SPACE_BLUE, 1.0)
@@ -589,4 +621,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
