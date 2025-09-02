@@ -615,32 +615,19 @@ def draw_skill_menu():
     if not skill_menu_open:
         return
     
-    # Dark overlay
-    glColor3f(0.0, 0.0, 0.0)
-    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity()
-    gluOrtho2D(0, 1000, 0, 800)
-    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity()
+    # Draw menu background using 3D coordinates that match the HUD system
+    glDisable(GL_DEPTH_TEST)  # Draw on top
     
-    glBegin(GL_QUADS)
-    glVertex2f(200, 150)
-    glVertex2f(800, 150)
-    glVertex2f(800, 650)
-    glVertex2f(200, 650)
-    glEnd()
-    
-    glPopMatrix()
-    glMatrixMode(GL_PROJECTION); glPopMatrix()
-    glMatrixMode(GL_MODELVIEW)
-    
+    # Use the same coordinate system as the existing HUD
     # Title
     glColor3f(*NEON_CYAN)
-    draw_text(450, 620, "SKILL UPGRADES", GLUT_BITMAP_HELVETICA_18)
+    draw_text(420, 650, "SKILL UPGRADES", GLUT_BITMAP_HELVETICA_18)
     
     glColor3f(*ENERGY_YELLOW)
-    draw_text(220, 590, f"Level: {player_level} | Skill Points: {skill_points} | XP: {experience_points}/{experience_to_next_level}", GLUT_BITMAP_HELVETICA_12)
+    draw_text(200, 620, f"Level: {player_level} | Skill Points: {skill_points} | XP: {experience_points}/{experience_to_next_level}", GLUT_BITMAP_HELVETICA_12)
     
-    # Skills
-    y_pos = 550
+    # Skills list
+    y_pos = 580
     skills = [
         ("faster_evasion", "Faster Evasion", "Reduces evasion cooldown"),
         ("weapon_power", "Weapon Power", "Increases bullet damage"),
@@ -653,6 +640,7 @@ def draw_skill_menu():
         skill_level = globals()[f'skill_{skill_name}']
         can_upgrade = can_upgrade_skill(skill_name)
         
+        # Set color based on upgrade status
         if can_upgrade:
             glColor3f(*NEON_GREEN)
         elif skill_level >= 3:
@@ -660,27 +648,35 @@ def draw_skill_menu():
         else:
             glColor3f(0.6, 0.6, 0.6)  # Can't afford
         
-        # Skill info
+        # Skill info line
         level_text = "MAX" if skill_level >= 3 else f"{skill_level}/3"
         cost_text = "" if skill_level >= 3 else f"Cost: {SKILL_COSTS[skill_name][skill_level]}"
+        skill_text = f"{i+1}. {display_name} [{level_text}] {cost_text}"
         
-        draw_text(220, y_pos, f"{i+1}. {display_name} [{level_text}] {cost_text}", GLUT_BITMAP_HELVETICA_12)
+        draw_text(200, y_pos, skill_text, GLUT_BITMAP_HELVETICA_12)
+        
+        # Description line
         glColor3f(0.8, 0.8, 0.8)
-        draw_text(240, y_pos - 15, description, GLUT_BITMAP_HELVETICA_10)
+        draw_text(220, y_pos - 15, description, GLUT_BITMAP_HELVETICA_10)
+        
         y_pos -= 50
     
     # Special ability section
     glColor3f(*NEON_PINK)
-    draw_text(220, 300, "SPECIAL ABILITY", GLUT_BITMAP_HELVETICA_18)
+    draw_text(200, 330, "SPECIAL ABILITY", GLUT_BITMAP_HELVETICA_18)
     
     ability_color = NEON_GREEN if can_use_special_ability() else (0.6, 0.6, 0.6)
     glColor3f(*ability_color)
-    draw_text(220, 270, f"Current: {current_special} | Charge: {int(special_ability_meter)}/{special_ability_max}", GLUT_BITMAP_HELVETICA_12)
+    ability_text = f"Current: {current_special} | Charge: {int(special_ability_meter)}/{special_ability_max}"
+    draw_text(200, 300, ability_text, GLUT_BITMAP_HELVETICA_12)
     
-    glColor3f(0.7, 0.7, 0.7)
-    draw_text(220, 220, "Controls:", GLUT_BITMAP_HELVETICA_12)
-    draw_text(220, 200, "1-5: Upgrade Skills | TAB: Cycle Special | F: Use Special", GLUT_BITMAP_HELVETICA_10)
-    draw_text(220, 180, "ESC: Close Menu", GLUT_BITMAP_HELVETICA_10)
+    # Controls help
+    glColor3f(0.9, 0.9, 0.9)
+    draw_text(200, 250, "Controls:", GLUT_BITMAP_HELVETICA_12)
+    draw_text(200, 230, "1-5: Upgrade Skills | TAB: Cycle Special | F: Use Special", GLUT_BITMAP_HELVETICA_10)
+    draw_text(200, 210, "V or ESC: Close Menu", GLUT_BITMAP_HELVETICA_10)
+    
+    glEnable(GL_DEPTH_TEST)  # Re-enable depth testing
 
 # =============================
 # Enemy helpers
@@ -1175,7 +1171,7 @@ def keyboardListener(key, x, y):
     
     # Skill menu handling
     if skill_menu_open:
-        if key == b'\x1b':  # ESC
+        if key == b'\x1b' or key == b'v' or key == b'V':  # ESC or V to close
             skill_menu_open = False
         elif key == b'\t':  # TAB
             cycle_special_ability()
@@ -1279,9 +1275,9 @@ def setupCamera():
     gluPerspective(fovY, 1.25, 0.1, 2000.0)
     glMatrixMode(GL_MODELVIEW); glLoadIdentity()
     
-    # Apply camera shake effect
+    # Apply camera shake effect only during active gameplay
     shake_x, shake_y, shake_z = 0.0, 0.0, 0.0
-    if camera_shake_timer > 0:
+    if camera_shake_timer > 0 and not game_over:  # Don't shake during game over
         # Random shake offset based on intensity
         shake_x = random.uniform(-camera_shake_intensity, camera_shake_intensity)
         shake_y = random.uniform(-camera_shake_intensity, camera_shake_intensity)
