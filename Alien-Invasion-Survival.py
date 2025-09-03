@@ -36,7 +36,7 @@ player_angle = 0.0
 player_health = 100
 player_max_health = 100
 player_speed = 4.0
-player_radius = 12.0  # Added player collision radius
+player_radius = 12.0
 
 # Game state
 current_score = 0
@@ -50,6 +50,9 @@ weapon_cooldown = 0
 max_weapon_cooldown = 15
 bullet_speed = 8
 muzzle_flash_timer = 0
+rapid_fire_mode = False
+rapid_fire_timer = 0
+rapid_fire_stamina_cost = 3.0
 
 # Evasion (Q/E)
 is_evading = False
@@ -61,11 +64,11 @@ EVADE_DURATION = 10
 EVADE_COOLDOWN_MAX = 50
 
 # Enemies / combat
-BULLET_DAMAGE = 15           # base damage, now modified by skills
-ENEMY_SPEED = 0.35           
+BULLET_DAMAGE = 15           
+ENEMY_SPEED = 0.15           # Reduced from 0.35 to make enemies much slower
 ENEMY_RADIUS = 7.0           
 TARGET_ENEMY_COUNT = 5
-ENEMY_DAMAGE = 15            # Damage enemies deal to player
+ENEMY_DAMAGE = 15
 
 # Overheat system
 heat_level = 0
@@ -82,23 +85,25 @@ game_over = False
 player_name = ""
 name_input_mode = False
 
-# Stamina System
+# Enhanced Stamina System
 stamina_level = 100
 stamina_max = 100
 stamina_regen_rate = 0.8
 stamina_sprint_drain = 2.0
 stamina_evade_cost = 25
+stamina_heavy_attack_cost = 15
 is_sprinting = False
 fatigued = False
 fatigue_threshold = 20
 sprint_speed_multiplier = 1.8
-sprint_accuracy_penalty = 0.7
+sprint_accuracy_penalty = 0.3  # Higher penalty for balance
 fatigue_speed_penalty = 0.6
+fatigue_accuracy_penalty = 0.7  # New: affects shooting when tired
 
-# Skill System
+# Enhanced Skill System
 player_level = 1
 experience_points = 0
-experience_to_next_level = 100
+experience_to_next_level = 50  # Reduced from 100 to 50 for easier progression
 skill_points = 0
 skill_faster_evasion = 0
 skill_weapon_power = 0
@@ -112,6 +117,11 @@ special_ability_timer = 0
 current_special = "DAMAGE_BOOST"
 skill_menu_open = False
 
+# Enhanced feedback system
+upgrade_message = ""
+upgrade_message_timer = 0
+skill_effect_timer = 0
+
 SKILL_COSTS = {
     'faster_evasion': [1, 2, 3],
     'weapon_power': [1, 2, 4],
@@ -120,13 +130,13 @@ SKILL_COSTS = {
     'health_boost': [2, 3, 5]
 }
 
-SPECIAL_ABILITIES = ["DAMAGE_BOOST", "TELEPORT", "INVINCIBILITY"]
+SPECIAL_ABILITIES = ["DAMAGE_BOOST", "TELEPORT", "INVINCIBILITY", "SHIELD_BUBBLE", "TIME_SLOW"]
 
 # =============================
 # Classes
 # =============================
 class Bullet:
-    def __init__(self, x, y, z, angle):
+    def __init__(self, x, y, z, angle, is_heavy=False):
         self.x = x
         self.y = y
         self.z = z
@@ -134,7 +144,8 @@ class Bullet:
         self.speed = bullet_speed
         self.life = 150
         self.active = True
-        self.damage = get_weapon_damage() if 'get_weapon_damage' in globals() else BULLET_DAMAGE
+        self.is_heavy = is_heavy
+        self.damage = get_weapon_damage() * (1.5 if is_heavy else 1.0)
 
     def update(self):
         if not self.active:
@@ -153,10 +164,17 @@ class Bullet:
             return
         glPushMatrix()
         glTranslatef(self.x, self.y, self.z)
-        glow = 0.8 + 0.2 * math.sin(game_time * 0.5)
-        glColor3f(0.0, glow, 1.0)  # cyan energy core
-        gluSphere(gluNewQuadric(), 1.6, 10, 8)
-        # Tiny trail
+        
+        if self.is_heavy:
+            glow = 0.8 + 0.2 * math.sin(game_time * 0.5)
+            glColor3f(1.0, glow * 0.5, 0.0)  # Orange heavy bullets
+            gluSphere(gluNewQuadric(), 2.5, 12, 10)
+        else:
+            glow = 0.8 + 0.2 * math.sin(game_time * 0.5)
+            glColor3f(0.0, glow, 1.0)  # cyan energy core
+            gluSphere(gluNewQuadric(), 1.6, 10, 8)
+        
+        # Trail effect
         glColor3f(0.3, 0.6, 1.0)
         for i in range(3):
             trail_offset = i * 3.0
@@ -184,15 +202,18 @@ class Enemy:
             return
         
         # Check for invincibility special ability
-        if special_ability_active and current_special == "INVINCIBILITY":
+        if special_ability_active and current_special in ["INVINCIBILITY", "SHIELD_BUBBLE"]:
             return  # Don't move toward invincible player
             
-        # Calculate movement toward player - ALWAYS move toward player
+        # Calculate movement toward player
         dx = player_pos[0] - self.x
         dy = player_pos[1] - self.y
         dist = math.hypot(dx, dy) + 1e-6
         
-        step = ENEMY_SPEED
+        # Slow down if time is slowed
+        speed_modifier = 0.3 if (special_ability_active and current_special == "TIME_SLOW") else 1.0
+        step = ENEMY_SPEED * speed_modifier
+        
         self.x += (dx / dist) * step
         self.y += (dy / dist) * step
         
@@ -206,9 +227,15 @@ class Enemy:
             return
         glPushMatrix()
         glTranslatef(self.x, self.y, self.z)
-        # body
-        glColor3f(0.9, 0.2, 0.2)      # red alien core
+        
+        # Time slow effect
+        if special_ability_active and current_special == "TIME_SLOW":
+            glColor3f(0.5, 0.1, 0.1)  # Darkened when slowed
+        else:
+            glColor3f(0.9, 0.2, 0.2)  # Normal red
+            
         gluSphere(gluNewQuadric(), self.radius, 12, 10)
+        
         # antenna
         glColor3f(1.0, 0.7, 0.2)
         glPushMatrix()
@@ -220,46 +247,40 @@ class Enemy:
 enemies = []
 
 # =============================
-# Player-Enemy Collision Function
+# Enhanced Player-Enemy Collision
 # =============================
 def check_player_enemy_collision():
-    """Check for collisions between player and enemies with camera shake instead of knockback."""
+    """Enhanced collision detection with shield protection."""
     global player_health, enemies, camera_shake_timer, camera_shake_intensity
     
-    # Skip collision if player is invincible
-    if special_ability_active and current_special == "INVINCIBILITY":
+    # Skip collision if player is invincible or has shield
+    if special_ability_active and current_special in ["INVINCIBILITY", "SHIELD_BUBBLE"]:
         return
     
-    # Skip collision during evasion (brief invincibility frames)
+    # Skip collision during evasion
     if is_evading:
         return
     
-    enemies_to_remove = []  # Track enemies to remove
+    enemies_to_remove = []
     
     for i, enemy in enumerate(enemies):
         if not enemy.alive:
             continue
             
-        # Calculate distance between player and enemy
         dx = player_pos[0] - enemy.x
         dy = player_pos[1] - enemy.y
         distance = math.hypot(dx, dy)
         
-        # Precise collision detection
         collision_distance = player_radius + enemy.radius
         
         if distance <= collision_distance:
-            # Player takes damage
             player_health -= ENEMY_DAMAGE
             
-            # Trigger camera shake instead of player knockback
-            camera_shake_timer = 30  # Shake for 30 frames (0.5 seconds at 60fps)
-            camera_shake_intensity = 15.0  # Shake intensity
+            # Enhanced camera shake
+            camera_shake_timer = 30
+            camera_shake_intensity = 15.0
             
-            # Mark enemy for removal
             enemies_to_remove.append(i)
-            
-            # Only process one collision per frame
             break
     
     # Remove collided enemies and spawn replacements
@@ -274,7 +295,6 @@ def update_camera_shake():
     
     if camera_shake_timer > 0:
         camera_shake_timer -= 1
-        # Gradually reduce shake intensity
         camera_shake_intensity *= 0.9
         
         if camera_shake_timer <= 0:
@@ -283,12 +303,11 @@ def update_camera_shake():
 def spawn_enemy_at_safe_distance():
     """Spawn an enemy at a safe distance from the player."""
     max_attempts = 10
-    min_safe_distance = 100.0  # Minimum distance from player
+    min_safe_distance = 100.0
     
     for _ in range(max_attempts):
         x, y = _random_edge_spawn()
         
-        # Check distance from player
         dx = player_pos[0] - x
         dy = player_pos[1] - y
         distance = math.hypot(dx, dy)
@@ -297,13 +316,12 @@ def spawn_enemy_at_safe_distance():
             enemies.append(Enemy(x, y))
             return
     
-    # Fallback: force spawn at a guaranteed safe location
+    # Fallback
     angle = random.uniform(0, 2 * math.pi)
     safe_distance = min_safe_distance + 50
     x = player_pos[0] + math.cos(angle) * safe_distance
     y = player_pos[1] + math.sin(angle) * safe_distance
     
-    # Clamp to arena bounds
     x = max(-GRID_LENGTH + 25, min(GRID_LENGTH - 25, x))
     y = max(-GRID_LENGTH + 25, min(GRID_LENGTH - 25, y))
     
@@ -313,7 +331,7 @@ def spawn_enemy_at_safe_distance():
 # High-Score Functions
 # =============================
 def load_high_scores():
-    """Load high scores from file."""
+    """Load high scores from file with level support."""
     global high_scores
     high_scores = []
     
@@ -327,37 +345,45 @@ def load_high_scores():
                 if not line:
                     continue
                 parts = line.split('|')
-                if len(parts) >= 3:
+                if len(parts) >= 4:  # New format with level
                     score = int(parts[0])
                     name = parts[1]
                     date = parts[2]
-                    high_scores.append((score, name, date))
+                    level = int(parts[3])
+                    high_scores.append((score, name, date, level))
+                elif len(parts) >= 3:  # Old format compatibility
+                    score = int(parts[0])
+                    name = parts[1]
+                    date = parts[2]
+                    level = 1  # Default level for old entries
+                    high_scores.append((score, name, date, level))
         
-        # Sort by score (highest first)
         high_scores.sort(key=lambda x: x[0], reverse=True)
-        high_scores = high_scores[:max_highscores]  # Keep only top 10
+        high_scores = high_scores[:max_highscores]
         
     except Exception as e:
         print(f"Error loading high scores: {e}")
         high_scores = []
 
 def save_high_score(score, name):
-    """Save a new high score."""
+    """Save a new high score with player level."""
     global high_scores
     
-    # Add current score
     current_date = datetime.now().strftime("%Y-%m-%d %H:%M")
-    high_scores.append((score, name, current_date))
+    high_scores.append((score, name, current_date, player_level))
     
-    # Sort and keep top scores
     high_scores.sort(key=lambda x: x[0], reverse=True)
     high_scores = high_scores[:max_highscores]
     
-    # Write to file
     try:
         with open(HIGHSCORE_FILE, 'w') as f:
-            for score, name, date in high_scores:
-                f.write(f"{score}|{name}|{date}\n")
+            for entry in high_scores:
+                if len(entry) == 4:  # New format with level
+                    score, name, date, level = entry
+                    f.write(f"{score}|{name}|{date}|{level}\n")
+                else:  # Old format compatibility
+                    score, name, date = entry
+                    f.write(f"{score}|{name}|{date}|1\n")  # Default level 1 for old entries
     except Exception as e:
         print(f"Error saving high scores: {e}")
 
@@ -368,35 +394,39 @@ def is_high_score(score):
     return score > high_scores[-1][0] if high_scores else True
 
 def draw_high_scores():
-    """Draw the high scores table on screen."""
+    """Draw the high scores table with player levels."""
     if not high_scores:
         return
     
-    # Title
     glColor3f(*NEON_PINK)
     draw_text(720, 600, "=== HIGH SCORES ===", GLUT_BITMAP_HELVETICA_18)
     
-    # Scores
     y_pos = 570
-    for i, (score, name, date) in enumerate(high_scores[:5]):  # Show top 5
+    for i, entry in enumerate(high_scores[:5]):
         if i == 0:
-            glColor3f(*ENERGY_YELLOW)  # Gold for #1
+            glColor3f(*ENERGY_YELLOW)
         elif i <= 2:
-            glColor3f(*NEON_CYAN)      # Cyan for top 3
+            glColor3f(*NEON_CYAN)
         else:
-            glColor3f(0.7, 0.7, 0.7)   # Gray for others
+            glColor3f(0.7, 0.7, 0.7)
         
-        # Truncate name if too long
-        display_name = name[:8] if len(name) > 8 else name
-        score_text = f"{i+1}. {display_name}: {score}"
+        # Handle both old and new format entries
+        if len(entry) == 4:
+            score, name, date, level = entry
+            display_name = name[:8] if len(name) > 8 else name
+            score_text = f"{i+1}. {display_name}: {score} (L{level})"
+        else:  # Old format compatibility
+            score, name, date = entry
+            display_name = name[:8] if len(name) > 8 else name
+            score_text = f"{i+1}. {display_name}: {score} (L1)"
+        
         draw_text(720, y_pos, score_text, GLUT_BITMAP_HELVETICA_10)
         y_pos -= 20
 
 def draw_game_over_screen():
-    """Draw game over text overlay without clearing the background."""
+    """Draw game over screen."""
     global name_input_mode, player_name
     
-    # Game Over text with pulsing effect (no background overlay)
     pulse = 0.7 + 0.3 * math.sin(game_time * 0.1)
     glColor3f(pulse, 0.0, 0.0)
     draw_text(350, 500, "GAME OVER", GLUT_BITMAP_HELVETICA_18)
@@ -425,11 +455,9 @@ def handle_player_death():
     global game_over, name_input_mode, player_health, camera_shake_timer, camera_shake_intensity
     
     if player_health <= 0 and not game_over:
-        # Clamp health to 0 so it doesn't go negative
         player_health = 0
         game_over = True
         
-        # Stop camera shake when game ends
         camera_shake_timer = 0
         camera_shake_intensity = 0.0
         
@@ -437,21 +465,34 @@ def handle_player_death():
             name_input_mode = True
 
 # =============================
-# Stamina Functions
+# Enhanced Stamina System
 # =============================
 def update_stamina():
-    """Update stamina levels and fatigue state."""
-    global stamina_level, fatigued, is_sprinting
+    """Enhanced stamina system with multiple drain sources."""
+    global stamina_level, fatigued, is_sprinting, rapid_fire_mode
     
+    # Stamina drains
     if is_sprinting and stamina_level > 0:
         stamina_level -= stamina_sprint_drain
         if stamina_level < 0:
             stamina_level = 0
-            is_sprinting = False  # Auto-stop sprinting when exhausted
-    else:
-        # Regenerate stamina when not sprinting
+            is_sprinting = False
+    
+    if rapid_fire_mode and stamina_level > 0:
+        stamina_level -= rapid_fire_stamina_cost
+        if stamina_level < 0:
+            stamina_level = 0
+            rapid_fire_mode = False
+    
+    # Stamina regeneration (affected by skills)
+    if not is_sprinting and not rapid_fire_mode:
         if stamina_level < stamina_max:
-            stamina_level += stamina_regen_rate
+            regen_rate = stamina_regen_rate
+            # Skill bonus
+            if skill_stamina_efficiency > 0:
+                regen_rate += skill_stamina_efficiency * 0.3
+            
+            stamina_level += regen_rate
             if stamina_level > stamina_max:
                 stamina_level = stamina_max
     
@@ -459,56 +500,104 @@ def update_stamina():
     fatigued = stamina_level < fatigue_threshold
 
 def get_current_speed():
-    """Get player speed based on sprint/fatigue state."""
+    """Enhanced speed calculation with skill effects."""
     base_speed = player_speed
     
     if fatigued:
         return base_speed * fatigue_speed_penalty
     elif is_sprinting:
-        return base_speed * sprint_speed_multiplier
+        multiplier = sprint_speed_multiplier
+        # Skill bonus for stamina efficiency
+        if skill_stamina_efficiency >= 2:
+            multiplier += 0.2
+        return base_speed * multiplier
     else:
         return base_speed
 
+def get_shooting_accuracy():
+    """Calculate current shooting accuracy based on player state."""
+    base_accuracy = 1.0
+    
+    if is_sprinting:
+        base_accuracy *= sprint_accuracy_penalty
+    
+    if fatigued:
+        base_accuracy *= fatigue_accuracy_penalty
+    
+    # Skill bonus
+    if skill_weapon_power >= 2:
+        base_accuracy += 0.1
+    
+    return base_accuracy
+
 def can_evade():
-    """Check if player has enough stamina to evade."""
-    return stamina_level >= stamina_evade_cost
+    """Enhanced evade checking."""
+    return stamina_level >= stamina_evade_cost and evade_cooldown <= 0
 
 def consume_evade_stamina():
-    """Consume stamina for evasion."""
+    """Consume stamina for evasion with skill efficiency."""
     global stamina_level
-    stamina_level -= stamina_evade_cost
+    cost = stamina_evade_cost
+    
+    # Skill reduction
+    if skill_faster_evasion >= 2:
+        cost = max(15, cost - 5)
+    
+    stamina_level -= cost
+    if stamina_level < 0:
+        stamina_level = 0
+
+def can_heavy_attack():
+    """Check if player can perform heavy attack."""
+    return stamina_level >= stamina_heavy_attack_cost and not overheated
+
+def consume_heavy_attack_stamina():
+    """Consume stamina for heavy attack."""
+    global stamina_level
+    stamina_level -= stamina_heavy_attack_cost
     if stamina_level < 0:
         stamina_level = 0
 
 # =============================
-# Skill System Functions
+# Enhanced Skill System
 # =============================
 def gain_experience(points):
-    """Gain experience points and handle leveling up."""
-    global experience_points, player_level, experience_to_next_level, skill_points
+    """Enhanced experience system with skill effects."""
+    global experience_points, player_level, experience_to_next_level, skill_points, skill_effect_timer
+    
+    # Bonus XP from high health skill
+    if skill_health_boost >= 3:
+        points = int(points * 1.2)
     
     experience_points += points
     
-    # Check for level up
     while experience_points >= experience_to_next_level:
         experience_points -= experience_to_next_level
         player_level += 1
         skill_points += 1
-        experience_to_next_level = int(experience_to_next_level * 1.2)  # Increase XP requirement
+        skill_effect_timer = 180  # Show level up effect
+        experience_to_next_level = int(experience_to_next_level * 1.2)
 
 def can_upgrade_skill(skill_name):
-    """Check if a skill can be upgraded."""
+    """Enhanced skill upgrade checking."""
     skill_level = globals()[f'skill_{skill_name}']
-    if skill_level >= 3:  # Max level
+    if skill_level >= 3:
         return False
     cost = SKILL_COSTS[skill_name][skill_level]
     return skill_points >= cost
 
 def upgrade_skill(skill_name):
-    """Upgrade a skill if possible."""
-    global skill_points
+    """Enhanced skill upgrade with better feedback."""
+    global skill_points, upgrade_message, upgrade_message_timer
     
     if not can_upgrade_skill(skill_name):
+        skill_level = globals()[f'skill_{skill_name}']
+        if skill_level >= 3:
+            upgrade_message = f"{skill_name.upper().replace('_', ' ')}: MAX LEVEL REACHED"
+        else:
+            cost = SKILL_COSTS[skill_name][skill_level]
+            upgrade_message = f"INSUFFICIENT SKILL POINTS! NEED {cost}, HAVE {skill_points}"
+        upgrade_message_timer = 120
         return False
     
     skill_level = globals()[f'skill_{skill_name}']
@@ -517,41 +606,55 @@ def upgrade_skill(skill_name):
     globals()[f'skill_{skill_name}'] += 1
     skill_points -= cost
     
-    # Apply skill effects
+    upgrade_message = f"{skill_name.upper().replace('_', ' ')} UPGRADED TO LEVEL {skill_level + 1}!"
+    upgrade_message_timer = 120
+    
     apply_skill_effects()
     return True
 
 def apply_skill_effects():
-    """Apply all skill effects to game variables."""
+    """Enhanced skill effects application."""
     global player_max_health, heat_cool_rate, stamina_regen_rate, stamina_sprint_drain
     
-    # Health boost
+    # Health boost (more significant)
     base_health = 100
-    player_max_health = base_health + (skill_health_boost * 25)
+    player_max_health = base_health + (skill_health_boost * 30)
     
-    # Heat management
+    # Heat management (more effective)
     base_cool_rate = 1
-    heat_cool_rate = base_cool_rate + (skill_heat_management * 0.5)
+    heat_cool_rate = base_cool_rate + (skill_heat_management * 0.7)
     
-    # Stamina efficiency
+    # Stamina efficiency (more noticeable)
     base_regen = 0.8
     base_drain = 2.0
-    stamina_regen_rate = base_regen + (skill_stamina_efficiency * 0.3)
-    stamina_sprint_drain = max(0.5, base_drain - (skill_stamina_efficiency * 0.4))
+    stamina_regen_rate = base_regen + (skill_stamina_efficiency * 0.4)
+    stamina_sprint_drain = max(0.5, base_drain - (skill_stamina_efficiency * 0.5))
 
 def get_weapon_damage():
-    """Get current weapon damage with skill modifiers."""
+    """Enhanced weapon damage calculation."""
     base_damage = 15
-    return base_damage + (skill_weapon_power * 5)
+    skill_bonus = skill_weapon_power * 7  # Increased from 5
+    
+    # Special ability bonus
+    if special_ability_active and current_special == "DAMAGE_BOOST":
+        return int((base_damage + skill_bonus) * 2.5)
+    
+    return base_damage + skill_bonus
 
 def get_evade_cooldown():
-    """Get evade cooldown with skill modifiers."""
+    """Enhanced evade cooldown with better skill scaling."""
     base_cooldown = 50
-    return max(20, base_cooldown - (skill_faster_evasion * 10))
+    reduction = skill_faster_evasion * 12  # Increased from 10
+    return max(20, base_cooldown - reduction)
 
 def charge_special_ability(amount):
-    """Charge the special ability meter."""
+    """Enhanced special ability charging."""
     global special_ability_meter
+    
+    # Skill bonus charging
+    if skill_weapon_power >= 3:
+        amount = int(amount * 1.3)
+    
     special_ability_meter = min(special_ability_max, special_ability_meter + amount)
 
 def can_use_special_ability():
@@ -559,20 +662,27 @@ def can_use_special_ability():
     return special_ability_meter >= special_ability_max and not special_ability_active
 
 def activate_special_ability():
-    """Activate the current special ability."""
+    """Enhanced special ability activation."""
     global special_ability_active, special_ability_timer, special_ability_meter
     
     if not can_use_special_ability():
         return False
     
     special_ability_active = True
-    special_ability_timer = 180  # 3 seconds at 60 FPS
-    special_ability_meter = 0
     
+    # Different durations for different abilities
+    if current_special == "TIME_SLOW":
+        special_ability_timer = 300  # 5 seconds
+    elif current_special == "SHIELD_BUBBLE":
+        special_ability_timer = 240  # 4 seconds
+    else:
+        special_ability_timer = 180  # 3 seconds
+    
+    special_ability_meter = 0
     return True
 
 def update_special_ability():
-    """Update special ability timer."""
+    """Enhanced special ability updates."""
     global special_ability_active, special_ability_timer
     
     if special_ability_active:
@@ -581,14 +691,14 @@ def update_special_ability():
             special_ability_active = False
 
 def cycle_special_ability():
-    """Cycle through available special abilities."""
+    """Enhanced special ability cycling."""
     global current_special
     
     current_index = SPECIAL_ABILITIES.index(current_special)
     current_special = SPECIAL_ABILITIES[(current_index + 1) % len(SPECIAL_ABILITIES)]
 
 def enhanced_evasion():
-    """Enhanced evasion with skill effects."""
+    """Enhanced evasion with multiple skill effects."""
     global is_evading, evade_timer, evade_cooldown
     
     if not can_evade():
@@ -596,87 +706,132 @@ def enhanced_evasion():
     
     is_evading = True
     evade_timer = EVADE_DURATION
-    evade_cooldown = get_evade_cooldown()  # Use skill-modified cooldown
+    evade_cooldown = get_evade_cooldown()
     consume_evade_stamina()
     
     # Special teleport ability
     if special_ability_active and current_special == "TELEPORT":
-        # Instant teleport to a safe location
         safe_x = random.uniform(-GRID_LENGTH * 0.5, GRID_LENGTH * 0.5)
         safe_y = random.uniform(-GRID_LENGTH * 0.5, GRID_LENGTH * 0.5)
         player_pos[0] = safe_x
         player_pos[1] = safe_y
-        is_evading = False  # No roll animation needed
+        is_evading = False
     
     return True
 
-def draw_skill_menu():
-    """Draw the skill upgrade menu."""
+def draw_enhanced_skill_menu():
+    """Enhanced skill menu with better visuals and feedback."""
+    global upgrade_message_timer
+    
     if not skill_menu_open:
         return
     
-    # Draw menu background using 3D coordinates that match the HUD system
-    glDisable(GL_DEPTH_TEST)  # Draw on top
+    if upgrade_message_timer > 0:
+        upgrade_message_timer -= 1
     
-    # Use the same coordinate system as the existing HUD
-    # Title
-    glColor3f(*NEON_CYAN)
-    draw_text(420, 650, "SKILL UPGRADES", GLUT_BITMAP_HELVETICA_18)
+    glDisable(GL_DEPTH_TEST)
     
+    # Enhanced background effect
+    glColor3f(0.0, 0.0, 0.1)
+    glBegin(GL_QUADS)
+    glVertex2f(150, 100)
+    glVertex2f(850, 100)
+    glVertex2f(850, 700)
+    glVertex2f(150, 700)
+    glEnd()
+    
+    # Title with glow effect
+    pulse = 0.7 + 0.3 * math.sin(game_time * 0.05)
+    glColor3f(0.0, pulse, 1.0)
+    draw_text(400, 680, "═══ PILOT SKILL UPGRADES ═══", GLUT_BITMAP_HELVETICA_18)
+    
+    # Player stats
     glColor3f(*ENERGY_YELLOW)
-    draw_text(200, 620, f"Level: {player_level} | Skill Points: {skill_points} | XP: {experience_points}/{experience_to_next_level}", GLUT_BITMAP_HELVETICA_12)
+    draw_text(180, 650, f"PILOT LEVEL: {player_level} │ SKILL POINTS: {skill_points} │ XP: {experience_points}/{experience_to_next_level}", GLUT_BITMAP_HELVETICA_12)
     
-    # Skills list
+    # Show upgrade feedback message
+    if upgrade_message_timer > 0:
+        message_pulse = 0.5 + 0.5 * math.sin(upgrade_message_timer * 0.15)
+        if "INSUFFICIENT" in upgrade_message or "MAX LEVEL" in upgrade_message:
+            glColor3f(1.0, message_pulse * 0.3, 0.0)
+        else:
+            glColor3f(0.0, 1.0, message_pulse)
+        draw_text(180, 620, upgrade_message, GLUT_BITMAP_HELVETICA_12)
+    
+    # Enhanced skills list
     y_pos = 580
     skills = [
-        ("faster_evasion", "Faster Evasion", "Reduces evasion cooldown"),
-        ("weapon_power", "Weapon Power", "Increases bullet damage"),
-        ("heat_management", "Heat Management", "Better weapon cooling"),
-        ("stamina_efficiency", "Stamina Boost", "Improved stamina system"),
-        ("health_boost", "Health Boost", "Increases maximum health")
+        ("faster_evasion", "Enhanced Mobility", "Reduces evasion cooldown by 12 frames per level"),
+        ("weapon_power", "Weapon Mastery", "Increases bullet damage by 7 per level + accuracy boost"),
+        ("heat_management", "Thermal Control", "Improves weapon cooling by 0.7 per level"),
+        ("stamina_efficiency", "Physical Conditioning", "Better stamina (+0.4 regen, -0.5 drain per level)"),
+        ("health_boost", "Hull Reinforcement", "Increases maximum health by 30 per level + XP bonus")
     ]
     
     for i, (skill_name, display_name, description) in enumerate(skills):
         skill_level = globals()[f'skill_{skill_name}']
         can_upgrade = can_upgrade_skill(skill_name)
         
-        # Set color based on upgrade status
-        if can_upgrade:
-            glColor3f(*NEON_GREEN)
+        # Enhanced visual indicators
+        if can_upgrade and skill_points > 0:
+            glow = 0.7 + 0.3 * math.sin(game_time * 0.1 + i)
+            glColor3f(0.0, glow, 0.5)
+            prefix = ">>> "
         elif skill_level >= 3:
-            glColor3f(*NEON_PINK)  # Max level
+            glColor3f(1.0, 0.0, 0.8)
+            prefix = "[MAX] "
         else:
-            glColor3f(0.6, 0.6, 0.6)  # Can't afford
+            glColor3f(0.5, 0.5, 0.5)
+            prefix = "    "
         
         # Skill info line
         level_text = "MAX" if skill_level >= 3 else f"{skill_level}/3"
-        cost_text = "" if skill_level >= 3 else f"Cost: {SKILL_COSTS[skill_name][skill_level]}"
-        skill_text = f"{i+1}. {display_name} [{level_text}] {cost_text}"
+        cost_text = "" if skill_level >= 3 else f"Cost: {SKILL_COSTS[skill_name][skill_level]} SP"
+        skill_text = f"{prefix}{i+1}. {display_name} [{level_text}] {cost_text}"
         
-        draw_text(200, y_pos, skill_text, GLUT_BITMAP_HELVETICA_12)
+        draw_text(180, y_pos, skill_text, GLUT_BITMAP_HELVETICA_12)
         
         # Description line
         glColor3f(0.8, 0.8, 0.8)
-        draw_text(220, y_pos - 15, description, GLUT_BITMAP_HELVETICA_10)
+        draw_text(200, y_pos - 15, description, GLUT_BITMAP_HELVETICA_10)
         
         y_pos -= 50
     
-    # Special ability section
+    # Enhanced special ability section
     glColor3f(*NEON_PINK)
-    draw_text(200, 330, "SPECIAL ABILITY", GLUT_BITMAP_HELVETICA_18)
+    draw_text(180, 330, "═══ SPECIAL ABILITIES ═══", GLUT_BITMAP_HELVETICA_18)
     
     ability_color = NEON_GREEN if can_use_special_ability() else (0.6, 0.6, 0.6)
     glColor3f(*ability_color)
-    ability_text = f"Current: {current_special} | Charge: {int(special_ability_meter)}/{special_ability_max}"
-    draw_text(200, 300, ability_text, GLUT_BITMAP_HELVETICA_12)
+    ability_text = f"ACTIVE: {current_special} │ CHARGE: {int(special_ability_meter)}/{special_ability_max}"
+    draw_text(180, 300, ability_text, GLUT_BITMAP_HELVETICA_12)
     
-    # Controls help
+    if can_use_special_ability():
+        pulse = 0.7 + 0.3 * math.sin(game_time * 0.2)
+        glColor3f(pulse, 1.0, 0.0)
+        draw_text(180, 280, ">>> READY TO ACTIVATE! Press F <<<", GLUT_BITMAP_HELVETICA_12)
+    
+    # Special ability descriptions
+    glColor3f(0.7, 0.7, 1.0)
+    descriptions = {
+        "DAMAGE_BOOST": "2.5x weapon damage for 3 seconds",
+        "TELEPORT": "Instant evasion teleport to safe location", 
+        "INVINCIBILITY": "Complete immunity to damage for 3 seconds",
+        "SHIELD_BUBBLE": "Protective barrier for 4 seconds",
+        "TIME_SLOW": "Slows enemy movement for 5 seconds"
+    }
+    draw_text(180, 260, descriptions[current_special], GLUT_BITMAP_HELVETICA_10)
+    
+    # Enhanced controls help
     glColor3f(0.9, 0.9, 0.9)
-    draw_text(200, 250, "Controls:", GLUT_BITMAP_HELVETICA_12)
-    draw_text(200, 230, "1-5: Upgrade Skills | TAB: Cycle Special | F: Use Special", GLUT_BITMAP_HELVETICA_10)
-    draw_text(200, 210, "V or ESC: Close Menu", GLUT_BITMAP_HELVETICA_10)
+    draw_text(180, 220, "═══ MENU CONTROLS ═══", GLUT_BITMAP_HELVETICA_12)
+    glColor3f(*NEON_GREEN)
+    draw_text(180, 200, "Keys 1-5: Upgrade Corresponding Skill", GLUT_BITMAP_HELVETICA_10)
+    draw_text(180, 180, "TAB: Cycle Through Special Abilities", GLUT_BITMAP_HELVETICA_10)
+    draw_text(180, 160, "F: Activate Special Ability (when ready)", GLUT_BITMAP_HELVETICA_10)
+    draw_text(180, 140, "V or ESC: Close This Menu", GLUT_BITMAP_HELVETICA_10)
     
-    glEnable(GL_DEPTH_TEST)  # Re-enable depth testing
+    glEnable(GL_DEPTH_TEST)
 
 # =============================
 # Enemy helpers
@@ -693,7 +848,7 @@ def _random_edge_spawn():
     return x, y
 
 def spawn_enemies(n=TARGET_ENEMY_COUNT):
-    """Spawn up to n enemies (replaces the list)."""
+    """Spawn up to n enemies."""
     global enemies
     enemies = []
     for _ in range(n):
@@ -785,37 +940,56 @@ def draw_arena_boundaries():
     glLineWidth(1.0)
 
 # =============================
-# Weapon / bullets
+# Enhanced Weapon System
 # =============================
-def fire_weapon():
+def fire_weapon(is_heavy=False):
+    """Enhanced weapon firing with stamina integration."""
     global weapon_cooldown, muzzle_flash_timer, heat_level, overheated
+    
     if weapon_cooldown > 0 or overheated:
         return False
-
-    # Calculate accuracy based on sprint state
-    accuracy_modifier = 0.0
-    if is_sprinting:
-        accuracy_modifier = random.uniform(-15, 15) * (1.0 - sprint_accuracy_penalty)
-    elif fatigued:
-        accuracy_modifier = random.uniform(-8, 8)
+    
+    # Check if heavy attack is possible
+    if is_heavy and not can_heavy_attack():
+        return False
+    
+    # Consume stamina for heavy attacks
+    if is_heavy:
+        consume_heavy_attack_stamina()
+    
+    # Calculate accuracy based on player state and skills
+    accuracy = get_shooting_accuracy()
+    base_spread = 5.0
+    spread_range = base_spread * (2.0 - accuracy)
+    accuracy_modifier = random.uniform(-spread_range, spread_range)
     
     bullet_angle = player_angle + accuracy_modifier
-
+    
     nose_forward = 18.0
     bx = player_pos[0] + math.cos(math.radians(player_angle)) * nose_forward
     by = player_pos[1] + math.sin(math.radians(player_angle)) * nose_forward
     bz = player_pos[2]
-    bullets.append(Bullet(bx, by, bz, bullet_angle))
-
-    weapon_cooldown = max_weapon_cooldown
-    muzzle_flash_timer = 5
-
-    # Add heat
-    heat_level += heat_per_shot
+    
+    bullets.append(Bullet(bx, by, bz, bullet_angle, is_heavy))
+    
+    # Enhanced weapon cooldown with skills
+    base_cooldown = max_weapon_cooldown
+    if skill_weapon_power >= 3:
+        base_cooldown = max(8, base_cooldown - 3)
+    
+    weapon_cooldown = base_cooldown
+    muzzle_flash_timer = 8 if is_heavy else 5
+    
+    # Enhanced heat system
+    heat_cost = heat_per_shot * (1.8 if is_heavy else 1.0)
+    if skill_heat_management > 0:
+        heat_cost *= (1.0 - skill_heat_management * 0.15)
+    
+    heat_level += heat_cost
     if heat_level >= heat_max:
         overheated = True
         heat_level = heat_max
-
+    
     return True
 
 def _segment_point_dist2(x1, y1, x2, y2, px, py):
@@ -834,7 +1008,7 @@ def _segment_point_dist2(x1, y1, x2, y2, px, py):
     return dx*dx + dy*dy
 
 def enhanced_bullet_enemy_collision():
-    """Enhanced collision detection with XP and special ability charging."""
+    """Enhanced collision detection with skill effects."""
     global bullets, current_score
     
     for bullet in bullets[:]:
@@ -849,25 +1023,33 @@ def enhanced_bullet_enemy_collision():
                 hit_r = e.radius + 2.0
                 d2 = _segment_point_dist2(prev_x, prev_y, bullet.x, bullet.y, e.x, e.y)
                 if d2 <= (hit_r * hit_r):
-                    # Use enhanced bullet damage
                     damage = bullet.damage
                     
                     # Special ability effects
                     if special_ability_active and current_special == "DAMAGE_BOOST":
-                        damage *= 2
+                        damage = int(damage * 2.5)
                     
                     e.hp -= damage
                     bullet.active = False
                     
                     if e.hp <= 0:
                         e.alive = False
-                        current_score += 10
                         
-                        # Gain experience and charge special ability
-                        gain_experience(5)
+                        # Enhanced scoring with skill bonuses
+                        base_score = 10
+                        if skill_weapon_power >= 2:
+                            base_score += 3
+                        
+                        current_score += base_score
+                        
+                        # Enhanced XP and special ability charging
+                        base_xp = 5
+                        if skill_health_boost >= 3:
+                            base_xp = int(base_xp * 1.2)
+                        
+                        gain_experience(base_xp)
                         charge_special_ability(8)
                         
-                        # Auto-respawn a new enemy
                         spawn_one_enemy()
                     break
 
@@ -877,73 +1059,113 @@ def enhanced_bullet_enemy_collision():
             bullets.remove(bullet)
 
 def draw_weapon_effects():
-    """Single center muzzle flash at the nose."""
+    """Enhanced muzzle flash with heavy attack effects."""
     global muzzle_flash_timer
     if muzzle_flash_timer <= 0:
         return
-    flash = muzzle_flash_timer / 5.0
+    
+    flash = muzzle_flash_timer / 8.0
     glPushMatrix()
     glTranslatef(player_pos[0], player_pos[1], player_pos[2])
     glRotatef(player_angle, 0.0, 0.0, 1.0)
-    glColor3f(1.0, flash, 0.0)
+    
+    # Different effects for heavy vs normal shots
+    if muzzle_flash_timer > 5:  # Heavy shot
+        glColor3f(1.0, flash * 0.5, 0.0)
+        size = 3.0 * flash
+    else:  # Normal shot
+        glColor3f(1.0, flash, 0.0)
+        size = 2.0 * flash
+    
     glPushMatrix()
-    glTranslatef(0.0, 14.0, -1.0)  # slightly ahead
-    gluSphere(gluNewQuadric(), 2.0 * flash, 10, 8)
+    glTranslatef(0.0, 14.0, -1.0)
+    gluSphere(gluNewQuadric(), size, 10, 8)
     glPopMatrix()
     glPopMatrix()
     muzzle_flash_timer -= 1
 
 # =============================
-# Player draw / HUD
+# Enhanced Player Visual
 # =============================
 def draw_3d_player():
+    """Enhanced player with visual skill effects."""
     glPushMatrix()
     glTranslatef(player_pos[0], player_pos[1], player_pos[2])
     glRotatef(player_angle, 0.0, 0.0, 1.0)
 
-    # Color based on state
-    if special_ability_active and current_special == "INVINCIBILITY":
-        glow = 0.5 + 0.5 * math.sin(game_time * 0.5)
-        glColor3f(1.0, glow, 1.0)  # Pink invincibility glow
+    # Enhanced color system based on state and skills
+    base_color = [0.2, 0.8, 1.0]
+    
+    # Special ability effects
+    if special_ability_active:
+        if current_special == "INVINCIBILITY":
+            glow = 0.5 + 0.5 * math.sin(game_time * 0.5)
+            base_color = [1.0, glow, 1.0]
+        elif current_special == "DAMAGE_BOOST":
+            glow = 0.7 + 0.3 * math.sin(game_time * 0.4)
+            base_color = [1.0, glow * 0.3, 0.0]
+        elif current_special == "SHIELD_BUBBLE":
+            base_color = [0.0, 1.0, 1.0]
+        elif current_special == "TIME_SLOW":
+            glow = 0.6 + 0.4 * math.sin(game_time * 0.2)
+            base_color = [0.8, 0.8, glow]
     elif is_evading:
-        glColor3f(1.0, 1.0, 0.3)  # Yellow during evasion
+        base_color = [1.0, 1.0, 0.3]
     elif is_sprinting:
         glow = 0.7 + 0.3 * math.sin(game_time * 0.3)
-        glColor3f(0.2, glow, 1.0)  # Pulsing blue during sprint
+        base_color = [0.2, glow, 1.0]
     elif fatigued:
-        glColor3f(0.8, 0.4, 0.4)  # Reddish when fatigued
-    else:
-        glColor3f(0.2, 0.8, 1.0)  # Normal cyan
+        base_color = [0.8, 0.4, 0.4]
+    
+    # Skill level glow enhancement
+    if skill_weapon_power >= 3:
+        base_color[0] = min(1.0, base_color[0] + 0.2)
+    if skill_stamina_efficiency >= 3:
+        base_color[1] = min(1.0, base_color[1] + 0.2)
+    if skill_health_boost >= 3:
+        base_color[2] = min(1.0, base_color[2] + 0.2)
+    
+    glColor3f(*base_color)
 
-    # Hull
+    # Hull with skill-based size modifications
+    hull_scale = 1.0
+    if skill_health_boost >= 2:
+        hull_scale += 0.1
+    
     glPushMatrix()
-    glScalef(1.5, 3.0, 0.8)
+    glScalef(1.5 * hull_scale, 3.0 * hull_scale, 0.8)
     gluSphere(gluNewQuadric(), 8.0, 12, 8)
     glPopMatrix()
 
-    # Cockpit
+    # Enhanced cockpit
     glColor3f(0.1, 0.3, 0.8)
-    glPushMatrix(); glTranslatef(0.0, 12.0, 3.0); glScalef(0.8, 1.2, 0.6)
-    gluSphere(gluNewQuadric(), 6.0, 10, 8); glPopMatrix()
+    glPushMatrix()
+    glTranslatef(0.0, 12.0, 3.0)
+    glScalef(0.8, 1.2, 0.6)
+    gluSphere(gluNewQuadric(), 6.0, 10, 8)
+    glPopMatrix()
 
-    # Wings
-    glColor3f(0.15, 0.6, 0.9)
+    # Enhanced wings with skill indicators
+    wing_color = [0.15, 0.6, 0.9]
+    if skill_faster_evasion >= 2:
+        wing_color[1] = min(1.0, wing_color[1] + 0.3)  # Brighter wings for mobility
+    
+    glColor3f(*wing_color)
     glPushMatrix(); glTranslatef(-12.0, -2.0, 0.0); glRotatef(90, 0, 1, 0); glScalef(0.3, 1.8, 2.0); glutSolidCube(8.0); glPopMatrix()
     glPushMatrix(); glTranslatef( 12.0, -2.0, 0.0); glRotatef(90, 0, 1, 0); glScalef(0.3, 1.8, 2.0); glutSolidCube(8.0); glPopMatrix()
 
-    # Engines
+    # Enhanced engines with stamina-based effects
     glColor3f(0.3, 0.3, 0.3)
     glPushMatrix(); glTranslatef(-8.0, -12.0, 0.0); glRotatef(90, 1, 0, 0); gluCylinder(gluNewQuadric(), 3.0, 2.0, 8.0, 8, 4); glPopMatrix()
     glPushMatrix(); glTranslatef( 8.0, -12.0, 0.0); glRotatef(90, 1, 0, 0); gluCylinder(gluNewQuadric(), 3.0, 2.0, 8.0, 8, 4); glPopMatrix()
 
-    # Enhanced engine effects based on state
+    # Enhanced engine effects
     glow = 0.6 + 0.4 * math.sin(game_time * 0.2)
     if is_sprinting:
-        # Brighter, more intense engine glow when sprinting
-        glColor3f(0.2, glow * 1.5, 1.0)
-        engine_size = 5.0
+        intensity = 1.5 if skill_stamina_efficiency >= 2 else 1.2
+        glColor3f(0.2, glow * intensity, 1.0)
+        engine_size = 6.0
     elif fatigued:
-        # Dimmer engines when fatigued
         glColor3f(0.1, glow * 0.5, 0.6)
         engine_size = 3.0
     else:
@@ -955,10 +1177,10 @@ def draw_3d_player():
     glPushMatrix(); glTranslatef( 8.0, -18.0, 0.0); gluSphere(gluNewQuadric(), engine_size, 8, 6); glPopMatrix()
     glColor3f(glow, glow * 0.8, 1.0); glPushMatrix(); glTranslatef(0.0, -16.0, 1.0); gluSphere(gluNewQuadric(), 2.5, 8, 6); glPopMatrix()
 
-    # Sprint trail effect
+    # Enhanced sprint trail
     if is_sprinting:
-        glColor3f(0.3, 0.7, 1.0)
-        for i in range(5):
+        trail_length = 7 if skill_stamina_efficiency >= 3 else 5
+        for i in range(trail_length):
             trail_offset = (i + 1) * 8.0
             trail_alpha = max(0.1, 0.8 - i * 0.15)
             glColor3f(0.0, trail_alpha, trail_alpha * 1.2)
@@ -968,12 +1190,26 @@ def draw_3d_player():
             gluSphere(gluNewQuadric(), 3.0, 8, 6)
             glPopMatrix()
 
-    # Weapons (visual mounts)
-    glColor3f(0.8, 0.8, 0.8)
+    # Enhanced weapons with skill indicators
+    weapon_color = [0.8, 0.8, 0.8]
+    if skill_weapon_power >= 2:
+        weapon_color = [1.0, 0.8, 0.2]  # Golden weapons
+    
+    glColor3f(*weapon_color)
     glPushMatrix(); glTranslatef(-6.0, 8.0, -1.0); glRotatef(90, 1, 0, 0); gluCylinder(gluNewQuadric(), 1.0, 0.5, 4.0, 6, 4); glPopMatrix()
     glPushMatrix(); glTranslatef( 6.0, 8.0, -1.0); glRotatef(90, 1, 0, 0); gluCylinder(gluNewQuadric(), 1.0, 0.5, 4.0, 6, 4); glPopMatrix()
 
-    # Wingtip strobes
+    # Shield bubble for special ability
+    if special_ability_active and current_special == "SHIELD_BUBBLE":
+        glColor3f(0.0, 0.8, 1.0)
+        shield_pulse = 0.3 + 0.4 * math.sin(game_time * 0.3)
+        glColor4f(0.0, shield_pulse, 1.0, 0.3)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        gluSphere(gluNewQuadric(), 25.0, 16, 12)
+        glDisable(GL_BLEND)
+
+    # Enhanced strobes
     strobe = (math.sin(game_time * 0.4) > 0.5)
     if strobe: glColor3f(1.0, 0.0, 0.0)
     else:      glColor3f(0.3, 0.0, 0.0)
@@ -991,7 +1227,7 @@ def draw_3d_player():
     glColor3f(0.1, 0.5, 0.8)
     glPushMatrix(); glTranslatef(0.0, 0.0, 8.0); glRotatef(90, 1, 0, 0); glScalef(0.2, 1.5, 1.0); glutSolidCube(6.0); glPopMatrix()
 
-    # Shadow quad
+    # Enhanced shadow
     glColor3f(0.05, 0.05, 0.15)
     glPushMatrix(); glTranslatef(0.0, 0.0, -2.0); glScalef(1.8, 3.5, 0.1)
     glBegin(GL_QUADS)
@@ -1012,22 +1248,32 @@ def draw_text(x, y, text, font=GLUT_BITMAP_HELVETICA_12):
     glMatrixMode(GL_MODELVIEW)
 
 def draw_enhanced_hud():
-    """Enhanced HUD with all new systems."""
-    global ui_pulse
+    """Fully enhanced HUD with all systems."""
+    global ui_pulse, skill_effect_timer
     ui_pulse += 0.1
-
-    # Left panel - Ship Status
-    glColor3f(*NEON_CYAN); draw_text(15, 750, "=== SHIP STATUS ===", GLUT_BITMAP_HELVETICA_18)
     
-    # Health
+    if skill_effect_timer > 0:
+        skill_effect_timer -= 1
+
+    # Left panel - Enhanced Ship Status
+    glColor3f(*NEON_CYAN); draw_text(15, 750, "═══ SHIP STATUS ═══", GLUT_BITMAP_HELVETICA_18)
+    
+    # Enhanced health display
     health_ratio = player_health / float(player_max_health)
-    if health_ratio > 0.6:   glColor3f(*NEON_GREEN);    status_text = "OPTIMAL"
-    elif health_ratio > 0.3: glColor3f(*ENERGY_YELLOW); status_text = "DAMAGED"
-    else:                    glColor3f(*WARNING_RED);   status_text = "CRITICAL"
-    draw_text(15, 720, f"HULL INTEGRITY: {int(health_ratio * 100)}%", GLUT_BITMAP_HELVETICA_12)
+    if health_ratio > 0.6:   
+        glColor3f(*NEON_GREEN)
+        status_text = "OPTIMAL"
+    elif health_ratio > 0.3: 
+        glColor3f(*ENERGY_YELLOW)
+        status_text = "DAMAGED"
+    else:                    
+        glColor3f(*WARNING_RED)
+        status_text = "CRITICAL"
+    
+    draw_text(15, 720, f"HULL: {player_health}/{player_max_health} ({int(health_ratio * 100)}%)", GLUT_BITMAP_HELVETICA_12)
     draw_text(15, 700, f"STATUS: {status_text}", GLUT_BITMAP_HELVETICA_12)
 
-    # Stamina
+    # Enhanced stamina display
     stamina_ratio = stamina_level / float(stamina_max)
     if fatigued:
         glColor3f(*WARNING_RED)
@@ -1039,90 +1285,135 @@ def draw_enhanced_hud():
         glColor3f(*ENERGY_YELLOW)
         stamina_status = "TIRED"
     
-    draw_text(15, 680, f"STAMINA: {int(stamina_level)} / {stamina_max}", GLUT_BITMAP_HELVETICA_12)
+    draw_text(15, 680, f"STAMINA: {int(stamina_level)}/{stamina_max}", GLUT_BITMAP_HELVETICA_12)
     draw_text(15, 660, f"CONDITION: {stamina_status}", GLUT_BITMAP_HELVETICA_12)
     
-    # Sprint indicator
+    # Enhanced movement status
     if is_sprinting:
-        glColor3f(*NEON_PINK)
-        draw_text(15, 640, "SPRINT: ACTIVE", GLUT_BITMAP_HELVETICA_12)
+        sprint_color = NEON_PINK if stamina_level > 30 else WARNING_RED
+        glColor3f(*sprint_color)
+        draw_text(15, 640, "ENGINES: AFTERBURNER", GLUT_BITMAP_HELVETICA_12)
     else:
         glColor3f(0.6, 0.6, 0.6)
-        draw_text(15, 640, "SPRINT: INACTIVE (C)", GLUT_BITMAP_HELVETICA_12)
+        draw_text(15, 640, "ENGINES: STANDARD (C to boost)", GLUT_BITMAP_HELVETICA_12)
 
-    # Weapons
+    # Enhanced weapon status
     if weapon_cooldown > 0:
-        glColor3f(*WARNING_RED); draw_text(15, 620, "WEAPONS: CHARGING", GLUT_BITMAP_HELVETICA_12)
+        glColor3f(*WARNING_RED)
+        draw_text(15, 620, f"WEAPONS: CHARGING ({weapon_cooldown})", GLUT_BITMAP_HELVETICA_12)
+    elif overheated:
+        glColor3f(*WARNING_RED)
+        draw_text(15, 620, "WEAPONS: OVERHEATED!", GLUT_BITMAP_HELVETICA_12)
     else:
-        glColor3f(*NEON_GREEN);  draw_text(15, 620, "WEAPONS: READY", GLUT_BITMAP_HELVETICA_12)
+        weapon_color = NEON_GREEN
+        if skill_weapon_power >= 3:
+            weapon_color = ENERGY_YELLOW
+        glColor3f(*weapon_color)
+        draw_text(15, 620, "WEAPONS: READY", GLUT_BITMAP_HELVETICA_12)
 
-    # Evade status
+    # Enhanced evasion status
     if evade_cooldown > 0:
-        glColor3f(*ENERGY_YELLOW); draw_text(15, 600, f"EVADE: COOLDOWN {evade_cooldown}", GLUT_BITMAP_HELVETICA_12)
+        glColor3f(*ENERGY_YELLOW)
+        draw_text(15, 600, f"EVASION: COOLDOWN ({evade_cooldown})", GLUT_BITMAP_HELVETICA_12)
     elif not can_evade():
-        glColor3f(*WARNING_RED);   draw_text(15, 600, "EVADE: LOW STAMINA", GLUT_BITMAP_HELVETICA_12)
+        glColor3f(*WARNING_RED)
+        draw_text(15, 600, "EVASION: INSUFFICIENT STAMINA", GLUT_BITMAP_HELVETICA_12)
     else:
-        glColor3f(*NEON_GREEN);    draw_text(15, 600, "EVADE: READY (Q/E)", GLUT_BITMAP_HELVETICA_12)
+        evasion_color = NEON_GREEN
+        if skill_faster_evasion >= 3:
+            evasion_color = ENERGY_YELLOW
+        glColor3f(*evasion_color)
+        draw_text(15, 600, "EVASION: READY (Q/E)", GLUT_BITMAP_HELVETICA_12)
 
-    # Heat status
+    # Enhanced heat status
     if overheated:
         glColor3f(1.0, 0.2, 0.2)
-        draw_text(15, 580, "WEAPON: OVERHEATED!", GLUT_BITMAP_HELVETICA_12)
+        draw_text(15, 580, "THERMAL: CRITICAL OVERLOAD!", GLUT_BITMAP_HELVETICA_12)
     else:
-        glColor3f(*ENERGY_YELLOW)
-        draw_text(15, 580, f"HEAT: {int(heat_level)} / {heat_max}", GLUT_BITMAP_HELVETICA_12)
+        heat_ratio = heat_level / heat_max
+        if heat_ratio > 0.8:
+            glColor3f(*WARNING_RED)
+        elif heat_ratio > 0.6:
+            glColor3f(*ENERGY_YELLOW)
+        else:
+            glColor3f(*NEON_GREEN)
+        draw_text(15, 580, f"THERMAL: {int(heat_level)}/{heat_max}", GLUT_BITMAP_HELVETICA_12)
 
-    # Center top
-    glColor3f(*NEON_PINK);      draw_text(400, 750, "ALIEN INVASION SURVIVAL", GLUT_BITMAP_HELVETICA_18)
-    glColor3f(*ENERGY_YELLOW);  draw_text(420, 720, f"WAVE: 1  |  SCORE: {current_score}", GLUT_BITMAP_HELVETICA_12)
+    # Center top - Enhanced mission status
+    glColor3f(*NEON_PINK)
+    draw_text(380, 750, "═══ ALIEN INVASION SURVIVAL ═══", GLUT_BITMAP_HELVETICA_18)
+    glColor3f(*ENERGY_YELLOW)
+    draw_text(400, 720, f"WAVE: 1 │ SCORE: {current_score} │ THREAT LEVEL: EXTREME", GLUT_BITMAP_HELVETICA_12)
+    
     pulse = 0.7 + 0.3 * math.sin(ui_pulse)
-    glColor3f(pulse, 1.0, pulse); draw_text(450, 700, "MISSION: SURVIVE", GLUT_BITMAP_HELVETICA_12)
+    glColor3f(pulse, 1.0, pulse)
+    draw_text(450, 700, "MISSION: SURVIVE AT ALL COSTS", GLUT_BITMAP_HELVETICA_12)
 
-    # Right panel - Tactical
+    # Right panel - Enhanced tactical info
     live_count = sum(1 for e in enemies if e.alive)
-    glColor3f(*NEON_CYAN);   draw_text(720, 750, "=== TACTICAL ===", GLUT_BITMAP_HELVETICA_18)
-    glColor3f(*ALIEN_GREEN); draw_text(720, 720, f"ENEMIES: {live_count} ACTIVE", GLUT_BITMAP_HELVETICA_12)
+    glColor3f(*NEON_CYAN)
+    draw_text(720, 750, "═══ TACTICAL ═══", GLUT_BITMAP_HELVETICA_18)
+    glColor3f(*ALIEN_GREEN)
+    draw_text(720, 720, f"HOSTILES: {live_count} ACTIVE", GLUT_BITMAP_HELVETICA_12)
+    
     threat = "LOW" if live_count <= 2 else ("MEDIUM" if live_count <= 5 else "HIGH")
-    draw_text(720, 700, f"THREAT LEVEL: {threat}", GLUT_BITMAP_HELVETICA_12)
+    threat_color = NEON_GREEN if threat == "LOW" else (ENERGY_YELLOW if threat == "MEDIUM" else WARNING_RED)
+    glColor3f(*threat_color)
+    draw_text(720, 700, f"THREAT: {threat}", GLUT_BITMAP_HELVETICA_12)
     draw_text(720, 680, f"PROJECTILES: {len(bullets)}", GLUT_BITMAP_HELVETICA_12)
 
-    # Skill info section
+    # Enhanced pilot skills display
     glColor3f(*NEON_PINK)
-    draw_text(720, 450, "=== PILOT SKILLS ===", GLUT_BITMAP_HELVETICA_12)
+    draw_text(720, 450, "═══ PILOT PROFILE ═══", GLUT_BITMAP_HELVETICA_12)
     
     glColor3f(*ENERGY_YELLOW)
-    draw_text(720, 430, f"Level: {player_level}", GLUT_BITMAP_HELVETICA_10)
+    draw_text(720, 430, f"RANK: LEVEL {player_level}", GLUT_BITMAP_HELVETICA_10)
     draw_text(720, 410, f"XP: {experience_points}/{experience_to_next_level}", GLUT_BITMAP_HELVETICA_10)
-    draw_text(720, 390, f"Skill Points: {skill_points}", GLUT_BITMAP_HELVETICA_10)
     
-    # Special ability status
+    # Show skill points with pulsing effect if available
+    if skill_points > 0:
+        skill_pulse = 0.5 + 0.5 * math.sin(game_time * 0.2)
+        glColor3f(skill_pulse, 1.0, 0.0)
+        draw_text(720, 390, f"SKILL POINTS: {skill_points} AVAILABLE!", GLUT_BITMAP_HELVETICA_10)
+    else:
+        glColor3f(0.6, 0.6, 0.6)
+        draw_text(720, 390, f"SKILL POINTS: {skill_points}", GLUT_BITMAP_HELVETICA_10)
+    
+    # Special ability status with enhanced visuals
     ability_color = NEON_GREEN if can_use_special_ability() else (0.6, 0.6, 0.6)
     glColor3f(*ability_color)
-    draw_text(720, 360, f"Special: {current_special}", GLUT_BITMAP_HELVETICA_10)
+    draw_text(720, 360, f"SPECIAL: {current_special}", GLUT_BITMAP_HELVETICA_10)
     
     meter_percent = int((special_ability_meter / special_ability_max) * 100)
-    draw_text(720, 340, f"Charge: {meter_percent}%", GLUT_BITMAP_HELVETICA_10)
+    draw_text(720, 340, f"CHARGE: {meter_percent}%", GLUT_BITMAP_HELVETICA_10)
     
     if special_ability_active:
-        glColor3f(*WARNING_RED)
-        draw_text(720, 320, "ABILITY ACTIVE!", GLUT_BITMAP_HELVETICA_10)
+        ability_pulse = 0.5 + 0.5 * math.sin(game_time * 0.3)
+        glColor3f(ability_pulse, 0.0, ability_pulse)
+        draw_text(720, 320, f"ABILITY ACTIVE! ({special_ability_timer})", GLUT_BITMAP_HELVETICA_10)
+
+    # Level up effect
+    if skill_effect_timer > 0:
+        level_pulse = 0.3 + 0.7 * math.sin(skill_effect_timer * 0.1)
+        glColor3f(level_pulse, 1.0, 0.0)
+        draw_text(400, 600, "LEVEL UP! SKILL POINT EARNED!", GLUT_BITMAP_HELVETICA_18)
 
     # Enhanced Controls Help
     glColor3f(0.7, 0.7, 1.0)
-    draw_text(15, 190, "=== CONTROLS ===", GLUT_BITMAP_HELVETICA_12)
-    draw_text(15, 170, "WASD: Navigate Ship", GLUT_BITMAP_HELVETICA_10)
-    draw_text(15, 150, "C: Sprint Toggle", GLUT_BITMAP_HELVETICA_10)
-    draw_text(15, 130, "SPACE / LMB: Fire Weapons", GLUT_BITMAP_HELVETICA_10)
-    draw_text(15, 110, "Q/E: Evasive Maneuvers", GLUT_BITMAP_HELVETICA_10)
-    draw_text(15, 90,  "V: Skill Menu | F: Special | TAB: Cycle", GLUT_BITMAP_HELVETICA_10)
-    draw_text(15, 70,  "ARROWS: Camera Control", GLUT_BITMAP_HELVETICA_10)
+    draw_text(15, 220, "═══ SHIP CONTROLS ═══", GLUT_BITMAP_HELVETICA_12)
+    glColor3f(0.9, 0.9, 0.9)
+    draw_text(15, 200, "WASD: Navigate │ C: Afterburner Toggle", GLUT_BITMAP_HELVETICA_10)
+    draw_text(15, 180, "SPACE/LMB: Fire │ SHIFT+SPACE: Heavy Shot", GLUT_BITMAP_HELVETICA_10)
+    draw_text(15, 160, "Q/E: Evasive Maneuvers", GLUT_BITMAP_HELVETICA_10)
+    draw_text(15, 140, "V: Pilot Skills │ F: Special │ TAB: Cycle", GLUT_BITMAP_HELVETICA_10)
+    draw_text(15, 120, "ARROWS: Camera Control", GLUT_BITMAP_HELVETICA_10)
 
 def reset_game():
-    """Reset all game variables to start a new game."""
+    """Enhanced game reset with skill preservation."""
     global current_score, game_time, player_health, player_pos, player_angle
     global bullets, enemies, heat_level, overheated, weapon_cooldown
     global is_evading, evade_timer, evade_cooldown, game_over, name_input_mode, player_name
-    global stamina_level, is_sprinting, fatigued, skill_menu_open
+    global stamina_level, is_sprinting, fatigued, skill_menu_open, rapid_fire_mode
     global special_ability_meter, special_ability_active, special_ability_timer
     global camera_shake_timer, camera_shake_intensity
     
@@ -1141,6 +1432,7 @@ def reset_game():
     name_input_mode = False
     player_name = ""
     skill_menu_open = False
+    rapid_fire_mode = False
     
     # Reset camera shake
     camera_shake_timer = 0
@@ -1156,18 +1448,20 @@ def reset_game():
     special_ability_active = False
     special_ability_timer = 0
     
-    # Apply skill effects to ensure proper values
+    # Apply skill effects and restore health
     apply_skill_effects()
-    player_health = player_max_health  # Use potentially upgraded max health
+    player_health = player_max_health
     
     spawn_enemies(TARGET_ENEMY_COUNT)
 
 # =============================
-# Input
+# Enhanced Input System
 # =============================
 def keyboardListener(key, x, y):
+    """Enhanced keyboard input with all new features."""
     global player_pos, player_angle, is_evading, evade_timer, evade_cooldown, evade_direction
     global game_over, name_input_mode, player_name, is_sprinting, skill_menu_open
+    global rapid_fire_mode
     
     # Skill menu handling
     if skill_menu_open:
@@ -1218,17 +1512,25 @@ def keyboardListener(key, x, y):
     if key == b'\t':
         cycle_special_ability()
     
-    # Sprint toggle
+    # Enhanced sprint toggle
     if key == b'c' or key == b'C':
         if stamina_level > 10:
             is_sprinting = not is_sprinting
         else:
             is_sprinting = False
     
+    # Rapid fire toggle (R key)
+    if key == b'r' or key == b'R':
+        if not game_over:
+            if stamina_level > 20:
+                rapid_fire_mode = not rapid_fire_mode
+            else:
+                rapid_fire_mode = False
+    
     # Get current movement speed
     current_speed = get_current_speed()
     
-    # Movement with speed modifiers
+    # Enhanced movement
     if key == b'w':
         nx = player_pos[0] + math.cos(math.radians(player_angle)) * current_speed
         ny = player_pos[1] + math.sin(math.radians(player_angle)) * current_speed
@@ -1243,19 +1545,25 @@ def keyboardListener(key, x, y):
         player_angle += 3.0
     if key == b'd':
         player_angle -= 3.0
+    
+    # Enhanced firing
     if key == b' ':
         fire_weapon()
 
-    # Enhanced evasion with skills
-    if key == b'q' and evade_cooldown <= 0 and not is_evading and can_evade():
+    # Enhanced evasion
+    if key == b'q' and can_evade():
         evade_direction = -1
         enhanced_evasion()
-    if key == b'e' and evade_cooldown <= 0 and not is_evading and can_evade():
+    if key == b'e' and can_evade():
         evade_direction = 1
         enhanced_evasion()
 
 def specialKeyListener(key, x, y):
+    """Enhanced special key handling."""
     global camera_pos
+    
+    # Heavy attack with SHIFT + SPACE would be handled here if needed
+    # For now, just camera controls
     cx, cy, cz = camera_pos
     if key == GLUT_KEY_UP:    cz += 15
     if key == GLUT_KEY_DOWN:  cz = max(100, cz - 15)
@@ -1264,21 +1572,25 @@ def specialKeyListener(key, x, y):
     camera_pos = [cx, cy, cz]
 
 def mouseListener(button, state, x, y):
+    """Enhanced mouse input."""
     if button == GLUT_LEFT_BUTTON and state == GLUT_DOWN:
         fire_weapon()
+    elif button == GLUT_RIGHT_BUTTON and state == GLUT_DOWN:
+        # Right click for heavy attack
+        fire_weapon(is_heavy=True)
 
 # =============================
-# Camera / Loop / Display
+# Enhanced Camera System
 # =============================
 def setupCamera():
+    """Enhanced camera with shake effects."""
     glMatrixMode(GL_PROJECTION); glLoadIdentity()
     gluPerspective(fovY, 1.25, 0.1, 2000.0)
     glMatrixMode(GL_MODELVIEW); glLoadIdentity()
     
-    # Apply camera shake effect only during active gameplay
+    # Enhanced camera shake
     shake_x, shake_y, shake_z = 0.0, 0.0, 0.0
-    if camera_shake_timer > 0 and not game_over:  # Don't shake during game over
-        # Random shake offset based on intensity
+    if camera_shake_timer > 0 and not game_over:
         shake_x = random.uniform(-camera_shake_intensity, camera_shake_intensity)
         shake_y = random.uniform(-camera_shake_intensity, camera_shake_intensity)
         shake_z = random.uniform(-camera_shake_intensity * 0.5, camera_shake_intensity * 0.5)
@@ -1289,7 +1601,9 @@ def setupCamera():
               0.0, 0.0, 1.0)
 
 def idle():
+    """Enhanced main game loop."""
     global game_time, weapon_cooldown, heat_level, overheated, evade_timer, is_evading, evade_cooldown
+    global rapid_fire_timer
     
     if game_over:
         glutPostRedisplay()
@@ -1297,28 +1611,37 @@ def idle():
     
     game_time += 1
 
+    # Enhanced weapon cooldown
     if weapon_cooldown > 0:
         weapon_cooldown -= 1
 
-    # Update stamina system
+    # Rapid fire handling
+    if rapid_fire_mode and weapon_cooldown == 0:
+        fire_weapon()
+
+    # Update enhanced stamina system
     update_stamina()
 
     # Update special abilities
     update_special_ability()
     
-    # Update camera shake effect
+    # Update camera shake
     update_camera_shake()
 
-    # Cool down heat each frame
+    # Enhanced heat system
     if heat_level > 0:
-        heat_level -= heat_cool_rate
+        cool_rate = heat_cool_rate
+        if skill_heat_management > 0:
+            cool_rate += skill_heat_management * 0.3
+        heat_level -= cool_rate
         if heat_level < 0:
             heat_level = 0
-    # Reset overheated if cooled enough
-    if overheated and heat_level <= (heat_max * 0.5):
+    
+    # Enhanced overheat recovery
+    if overheated and heat_level <= (heat_max * 0.4):
         overheated = False
 
-    # Evasion update
+    # Enhanced evasion update
     if is_evading:
         angle_rad = math.radians(player_angle + 90 * evade_direction)
         step = EVADE_DISTANCE / float(EVADE_DURATION)
@@ -1329,20 +1652,18 @@ def idle():
         evade_timer -= 1
         if evade_timer <= 0:
             is_evading = False
+    
     if evade_cooldown > 0:
         evade_cooldown -= 1
 
     update_enemies()
-    
-    # Check for player-enemy collisions (NEW!)
     check_player_enemy_collision()
-    
-    # Check if player died
     handle_player_death()
     
     glutPostRedisplay()
 
 def showScreen():
+    """Enhanced main display function."""
     glClearColor(*SPACE_BLUE, 1.0)
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
     glLoadIdentity()
@@ -1354,11 +1675,11 @@ def showScreen():
     draw_arena_boundaries()
     draw_enemies()
     draw_3d_player()
-    enhanced_bullet_enemy_collision()  # Enhanced collision with XP
+    enhanced_bullet_enemy_collision()
     draw_weapon_effects()
     draw_enhanced_hud()
     draw_high_scores()
-    draw_skill_menu()
+    draw_enhanced_skill_menu()
     
     if game_over:
         draw_game_over_screen()
@@ -1366,26 +1687,50 @@ def showScreen():
     glutSwapBuffers()
 
 # =============================
-# Main
+# Main Function
 # =============================
 def main():
-    load_high_scores()  # Load scores on startup
+    """Enhanced main function."""
+    print("═══════════════════════════════════════")
+    print("    ALIEN INVASION SURVIVAL")
+    print("    Enhanced Edition v2.0")
+    print("═══════════════════════════════════════")
+    print("Loading high scores...")
+    
+    load_high_scores()
     init_stars()
+    
+    print("Initializing OpenGL...")
     glutInit()
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH)
     glutInitWindowSize(1000, 800)
     glutInitWindowPosition(0, 0)
-    glutCreateWindow(b"Alien Invasion Survival - Space Combat")
+    glutCreateWindow(b"Alien Invasion Survival - Enhanced Space Combat Simulator")
     glEnable(GL_DEPTH_TEST)
 
-    apply_skill_effects()  # Apply any loaded skills
+    print("Applying initial skill configurations...")
+    apply_skill_effects()
     spawn_enemies(TARGET_ENEMY_COUNT)
-
+    
+    print("Setting up input handlers...")
     glutDisplayFunc(showScreen)
     glutKeyboardFunc(keyboardListener)
     glutSpecialFunc(specialKeyListener)
     glutMouseFunc(mouseListener)
     glutIdleFunc(idle)
+
+    print("═══════════════════════════════════════")
+    print("CONTROLS:")
+    print("WASD: Navigate Ship")
+    print("C: Toggle Afterburner")
+    print("SPACE/LMB: Fire Weapons")
+    print("RMB: Heavy Attack")
+    print("Q/E: Evasive Maneuvers") 
+    print("V: Skill Menu")
+    print("F: Activate Special")
+    print("TAB: Cycle Special")
+    print("═══════════════════════════════════════")
+    print("LAUNCHING GAME...")
 
     glutMainLoop()
 
