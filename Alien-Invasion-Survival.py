@@ -1888,7 +1888,6 @@ def main():
     """Enhanced main function."""
     print("═══════════════════════════════════════")
     print("    ALIEN INVASION SURVIVAL")
-    print("    Enhanced Edition v2.0")
     print("═══════════════════════════════════════")
     print("Loading high scores...")
 
