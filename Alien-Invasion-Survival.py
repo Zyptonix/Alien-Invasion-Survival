@@ -125,6 +125,27 @@ upgrade_message = ""
 upgrade_message_timer = 0
 skill_effect_timer = 0
 
+
+# ===== Mobility Boost (V -> 1) =====
+mobility_boost_active = False
+mobility_boost_timer = 0
+MOBILITY_BOOST_MULTIPLIER = 10.0
+MOBILITY_BOOST_DURATION = 15 * 60   # 15s if ~60 FPS
+
+
+# ===== Weapon Mastery (V -> 2) =====
+weapon_mastery_active = False
+weapon_mastery_timer = 0
+WEAPON_MASTERY_DURATION = 10 * 60   # 10 seconds @ ~60 FPS
+WEAPON_MASTERY_SPEED_MULT = 2.0     # bullets fly 2x faster
+WEAPON_MASTERY_DAMAGE_MULT = 1.5    # stacks on top of skill damage
+
+
+
+
+
+
+
 SKILL_COSTS = {
     'faster_evasion': [1, 2, 3],
     'weapon_power': [1, 2, 4],
@@ -330,6 +351,41 @@ def spawn_enemy_at_safe_distance():
 
     enemies.append(Enemy(x, y))
 
+
+
+
+
+
+
+
+
+
+def start_mobility_boost():
+    """Activate a 10x speed boost for 15 seconds."""
+    global mobility_boost_active, mobility_boost_timer, upgrade_message, upgrade_message_timer
+    mobility_boost_active = True
+    mobility_boost_timer = MOBILITY_BOOST_DURATION
+    # Optional on-screen feedback (reuses your upgrade message system)
+    upgrade_message = "ENHANCED MOBILITY: 10× SPEED FOR 15s!"
+    upgrade_message_timer = 120
+
+
+
+
+
+def start_weapon_mastery():
+    """Activate Weapon Mastery: big, faster, stronger bullets for 10s."""
+    global weapon_mastery_active, weapon_mastery_timer, upgrade_message, upgrade_message_timer
+    weapon_mastery_active = True
+    weapon_mastery_timer = WEAPON_MASTERY_DURATION
+    upgrade_message = "WEAPON MASTERY: Big + Fast + Strong bullets (10s)!"
+    upgrade_message_timer = 120
+
+
+
+
+
+
 # =============================
 # High-Score Functions
 # =============================
@@ -504,19 +560,22 @@ def update_stamina():
     fatigued = stamina_level < fatigue_threshold
 
 def get_current_speed():
-    """Enhanced speed calculation with skill effects."""
     base_speed = player_speed
+
+    # If boost is active, override to pure 10x base speed
+    if mobility_boost_active:
+        return base_speed * MOBILITY_BOOST_MULTIPLIER
 
     if fatigued:
         return base_speed * fatigue_speed_penalty
     elif is_sprinting:
         multiplier = sprint_speed_multiplier
-        # Skill bonus for stamina efficiency
         if skill_stamina_efficiency >= 2:
             multiplier += 0.2
         return base_speed * multiplier
     else:
         return base_speed
+
 
 def get_shooting_accuracy():
     """Calculate current shooting accuracy based on player state."""
@@ -665,6 +724,25 @@ def can_use_special_ability():
     """Check if special ability can be used."""
     return special_ability_meter >= special_ability_max and not special_ability_active
 
+def activate_special_ability():
+    """Enhanced special ability activation."""
+    global special_ability_active, special_ability_timer, special_ability_meter
+
+    if not can_use_special_ability():
+        return False
+
+    special_ability_active = True
+
+    # Different durations for different abilities
+    if current_special == "TIME_SLOW":
+        special_ability_timer = 300  # 5 seconds
+    elif current_special == "SHIELD_BUBBLE":
+        special_ability_timer = 240  # 4 seconds
+    else:
+        special_ability_timer = 180  # 3 seconds
+
+    special_ability_meter = 0
+    return True
 def activate_special_ability():
     """Enhanced special ability activation."""
     global special_ability_active, special_ability_timer, special_ability_meter
@@ -953,15 +1031,16 @@ def fire_weapon(is_heavy=False):
     if weapon_cooldown > 0 or overheated:
         return False
 
-    # Check if heavy attack is possible
-    if is_heavy and not can_heavy_attack():
-        return False
+    # If mastery is active, we treat ALL shots as heavy-style visuals/damage base
+    effective_is_heavy = is_heavy or weapon_mastery_active
 
-    # Consume stamina for heavy attacks
-    if is_heavy:
+    # Check if heavy attack is possible (only applies when user explicitly heavy-shoots)
+    if effective_is_heavy and is_heavy and not can_heavy_attack():
+        return False
+    if is_heavy and effective_is_heavy:
         consume_heavy_attack_stamina()
 
-    # Calculate accuracy based on player state and skills
+    # Accuracy
     accuracy = get_shooting_accuracy()
     base_spread = 5.0
     spread_range = base_spread * (2.0 - accuracy)
@@ -974,27 +1053,39 @@ def fire_weapon(is_heavy=False):
     by = player_pos[1] + math.sin(math.radians(player_angle)) * nose_forward
     bz = player_pos[2]
 
-    bullets.append(Bullet(bx, by, bz, bullet_angle, is_heavy))
+    # Create bullet; mark heavy if mastery is active (big visuals)
+    new_bullet = Bullet(bx, by, bz, bullet_angle, is_heavy=effective_is_heavy)
 
-    # Enhanced weapon cooldown with skills
+    # Speed boost during mastery
+    if weapon_mastery_active:
+        new_bullet.speed *= WEAPON_MASTERY_SPEED_MULT
+
+    # Extra damage multiplier during mastery (on top of heavy flag damage)
+    if weapon_mastery_active:
+        new_bullet.damage = int(new_bullet.damage * WEAPON_MASTERY_DAMAGE_MULT)
+
+    bullets.append(new_bullet)
+
+    # Cooldown
     base_cooldown = max_weapon_cooldown
     if skill_weapon_power >= 3:
         base_cooldown = max(8, base_cooldown - 3)
-
     weapon_cooldown = base_cooldown
-    muzzle_flash_timer = 8 if is_heavy else 5
 
-    # Enhanced heat system
-    heat_cost = heat_per_shot * (1.8 if is_heavy else 1.0)
+    # Muzzle flash (heavy-looking while mastery is active)
+    muzzle_flash_timer = 8 if effective_is_heavy else 5
+
+    # Heat system
+    heat_cost = heat_per_shot * (1.8 if effective_is_heavy else 1.0)
     if skill_heat_management > 0:
         heat_cost *= (1.0 - skill_heat_management * 0.15)
-
     heat_level += heat_cost
     if heat_level >= heat_max:
         overheated = True
         heat_level = heat_max
 
     return True
+
 
 def _segment_point_dist2(x1, y1, x2, y2, px, py):
     """Squared distance from point P to segment [P1,P2] in 2D."""
@@ -1047,7 +1138,7 @@ def enhanced_bullet_enemy_collision():
                         current_score += base_score
 
                         # Enhanced XP and special ability charging
-                        base_xp = 5
+                        base_xp = 25
                         if skill_health_boost >= 3:
                             base_xp = int(base_xp * 1.2)
 
@@ -1277,6 +1368,20 @@ def draw_enhanced_hud():
     global ui_pulse, skill_effect_timer
     ui_pulse += 0.1
 
+
+
+    if weapon_mastery_active:
+        glColor3f(*NEON_PINK)
+        secs_left = max(0, weapon_mastery_timer // 60)
+        draw_text(720, 300, f"WEAPON MASTERY: BIG+FAST+STRONG ({secs_left}s)", GLUT_BITMAP_HELVETICA_10)
+
+
+    if mobility_boost_active:
+        glColor3f(*NEON_GREEN)
+        secs_left = max(0, mobility_boost_timer // 60)
+        draw_text(15, 240, f"MOBILITY BOOST: 10× SPEED ({secs_left}s left)", GLUT_BITMAP_HELVETICA_12)
+
+
     if skill_effect_timer > 0:
         skill_effect_timer -= 1
 
@@ -1429,7 +1534,6 @@ def draw_enhanced_hud():
     draw_text(15, 220, "═══ SHIP CONTROLS ═══", GLUT_BITMAP_HELVETICA_12)
     glColor3f(0.9, 0.9, 0.9)
     draw_text(15, 200, "WASD: Navigate │ C: Afterburner Toggle", GLUT_BITMAP_HELVETICA_10)
-    draw_text(15, 180, "SPACE/LMB: Fire │ SHIFT+SPACE: Heavy Shot", GLUT_BITMAP_HELVETICA_10)
     draw_text(15, 160, "Q/E: Evasive Maneuvers", GLUT_BITMAP_HELVETICA_10)
     draw_text(15, 140, "V: Pilot Skills │ F: Special │ TAB: Cycle", GLUT_BITMAP_HELVETICA_10)
     draw_text(15, 120, "ARROWS: Camera Control", GLUT_BITMAP_HELVETICA_10)
@@ -1491,18 +1595,29 @@ def keyboardListener(key, x, y):
 
     # Skill menu handling
     if skill_menu_open:
-        if key == b'\x1b' or key == b'v' or key == b'V':  # ESC or V to close
+        if key == b'\x1b' or key == b'v' or key == b'V':
             skill_menu_open = False
-        elif key == b'\t':  # TAB
+        elif key == b'\t':
             cycle_special_ability()
         elif key == b'f' or key == b'F':
             activate_special_ability()
         elif key in [b'1', b'2', b'3', b'4', b'5']:
-            skill_index = int(key.decode()) - 1
-            skill_names = ['faster_evasion', 'weapon_power', 'heat_management', 'stamina_efficiency', 'health_boost']
-            if skill_index < len(skill_names):
-                upgrade_skill(skill_names[skill_index])
+            choice = int(key.decode())
+            if choice == 1:
+                start_mobility_boost()
+                skill_menu_open = False
+            elif choice == 2:
+                # V -> 2 = Weapon Mastery for 10s
+                start_weapon_mastery()
+                skill_menu_open = False
+            else:
+                # Keep upgrade behavior for 3..5 (and optionally 1 if you want)
+                skill_index = choice - 1
+                skill_names = ['faster_evasion', 'weapon_power', 'heat_management', 'stamina_efficiency', 'health_boost']
+                if skill_index < len(skill_names):
+                    upgrade_skill(skill_names[skill_index])
         return
+
 
     # Game over state handling
     if game_over:
@@ -1602,8 +1717,11 @@ def mouseListener(button, state, x, y):
     if button == GLUT_LEFT_BUTTON and state == GLUT_DOWN:
         fire_weapon()
     elif button == GLUT_RIGHT_BUTTON and state == GLUT_DOWN:
-        # Right click for heavy attack
-        fire_weapon(is_heavy=True)
+        # Heavy attack only when Weapon Mastery is active
+        if weapon_mastery_active:
+            fire_weapon(is_heavy=True)
+        # else: ignore right click (feature moved inside V->2)
+
 
 # =============================
 # Enhanced Camera System
@@ -1630,6 +1748,16 @@ def idle():
     """Enhanced main game loop."""
     global game_time, weapon_cooldown, heat_level, overheated, evade_timer, is_evading, evade_cooldown
     global rapid_fire_timer
+
+
+
+    # Weapon Mastery countdown
+    global weapon_mastery_active, weapon_mastery_timer
+    if weapon_mastery_active:
+        weapon_mastery_timer -= 1
+        if weapon_mastery_timer <= 0:
+            weapon_mastery_active = False
+
 
     if game_over:
         glutPostRedisplay()
@@ -1681,6 +1809,18 @@ def idle():
 
     if evade_cooldown > 0:
         evade_cooldown -= 1
+
+
+
+
+    # Mobility boost countdown
+    global mobility_boost_active, mobility_boost_timer
+    if mobility_boost_active:
+        mobility_boost_timer -= 1
+        if mobility_boost_timer <= 0:
+            mobility_boost_active = False
+   
+
 
     update_enemies()
     check_player_enemy_collision()
@@ -1749,12 +1889,9 @@ def main():
     print("CONTROLS:")
     print("WASD: Navigate Ship")
     print("C: Toggle Afterburner")
-    print("SPACE/LMB: Fire Weapons")
-    print("RMB: Heavy Attack")
     print("Q/E: Evasive Maneuvers")
     print("V: Skill Menu")
     print("F: Activate Special")
-    print("TAB: Cycle Special")
     print("═══════════════════════════════════════")
     print("LAUNCHING GAME...")
 
