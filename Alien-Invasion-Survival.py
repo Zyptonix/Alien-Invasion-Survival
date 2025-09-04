@@ -725,43 +725,35 @@ def can_use_special_ability():
     return special_ability_meter >= special_ability_max and not special_ability_active
 
 def activate_special_ability():
-    """Enhanced special ability activation."""
-    global special_ability_active, special_ability_timer, special_ability_meter
+    """Enhanced special ability activation (TELEPORT is instant)."""
+    global special_ability_active, special_ability_timer, special_ability_meter, upgrade_message, upgrade_message_timer
 
     if not can_use_special_ability():
         return False
 
-    special_ability_active = True
+    # TELEPORT: do it instantly and do not start a timed state
+    if current_special == "TELEPORT":
+        special_ability_meter = 0
+        do_teleport()
+        upgrade_message = ">>> TELEPORTED to a safe zone!"
+        upgrade_message_timer = 120
+        # no timed state for teleport
+        special_ability_active = False
+        special_ability_timer = 0
+        return True
 
-    # Different durations for different abilities
+    # Timed abilities
+    special_ability_active = True
     if current_special == "TIME_SLOW":
-        special_ability_timer = 300  # 5 seconds
+        special_ability_timer = 300  # 5s
     elif current_special == "SHIELD_BUBBLE":
-        special_ability_timer = 240  # 4 seconds
+        special_ability_timer = 240  # 4s
     else:
-        special_ability_timer = 180  # 3 seconds
+        special_ability_timer = 180  # 3s: INVINCIBILITY, DAMAGE_BOOST, etc.w
 
     special_ability_meter = 0
     return True
-def activate_special_ability():
-    """Enhanced special ability activation."""
-    global special_ability_active, special_ability_timer, special_ability_meter
 
-    if not can_use_special_ability():
-        return False
-
-    special_ability_active = True
-
-    # Different durations for different abilities
-    if current_special == "TIME_SLOW":
-        special_ability_timer = 300  # 5 seconds
-    elif current_special == "SHIELD_BUBBLE":
-        special_ability_timer = 240  # 4 seconds
-    else:
-        special_ability_timer = 180  # 3 seconds
-
-    special_ability_meter = 0
-    return True
 
 def update_special_ability():
     """Enhanced special ability updates."""
@@ -1020,6 +1012,43 @@ def draw_arena_boundaries():
     glVertex3f(-GRID_LENGTH, -GRID_LENGTH, 10); glVertex3f(-GRID_LENGTH, -GRID_LENGTH + corner, 10)
     glEnd()
     glLineWidth(1.0)
+
+
+
+
+
+def do_teleport():
+    """Instantly move player to a safe random spot."""
+    global player_pos, is_evading
+    safe_enemy_radius = 120.0
+    max_attempts = 20
+    for _ in range(max_attempts):
+        x = random.uniform(-GRID_LENGTH * 0.8, GRID_LENGTH * 0.8)
+        y = random.uniform(-GRID_LENGTH * 0.8, GRID_LENGTH * 0.8)
+        # stay away from edges a bit
+        x = max(-GRID_LENGTH + 30, min(GRID_LENGTH - 30, x))
+        y = max(-GRID_LENGTH + 30, min(GRID_LENGTH - 30, y))
+        if all(math.hypot(x - e.x, y - e.y) >= safe_enemy_radius for e in enemies if e.alive):
+            player_pos[0], player_pos[1] = x, y
+            is_evading = False
+            return True
+    # fallback: hop in a random direction
+    ang = random.uniform(0, 2 * math.pi)
+    hop = safe_enemy_radius
+    nx = player_pos[0] + math.cos(ang) * hop
+    ny = player_pos[1] + math.sin(ang) * hop
+    player_pos[0] = max(-GRID_LENGTH + 30, min(GRID_LENGTH - 30, nx))
+    player_pos[1] = max(-GRID_LENGTH + 30, min(GRID_LENGTH - 30, ny))
+    is_evading = False
+    return True
+
+
+
+
+
+
+
+
 
 # =============================
 # Enhanced Weapon System
