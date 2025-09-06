@@ -1,16 +1,7 @@
 
 """
-Alien Invasion Survival (OpenGL/GLUT)
+Alien Invasion Survival 
 -------------------------------------
-This script implements a simple 3D survival shooter using the exact OpenGL/GLUT
-calls allowed by our course template. Comments are written in a human, student-like
-tone to explain what each block is doing.
-
-Tweaks in this revision:
-- Evade now costs ~50 stamina (was 30) to make movement choices matter.
-- Stamina recharges more slowly overall to reward planning and timing.
-- Replaced 'glRotate' with 'glRotatef' and removed 'glutLeaveMainLoop' to comply with
-  the template's allowed function list.
 """
 
 from OpenGL.GL import *
@@ -30,12 +21,12 @@ camera_angle = 0.0
 camera_distance = 220.0
 camera_height = 90.0
 camera_mode = "FOLLOW" 
-camera_shake_intensity = 0.0  #<-- ADD THIS LINE
-camera_shake_duration = 0     #<-- ADD THIS LINE
-camera_pos = [0.0, 0.0, 0.0] #<-- ADD THIS LINE
-fovY = 60
-ARENA_WIDTH = 500
-ARENA_HEIGHT = 300
+camera_shake_intensity = 0.0  
+camera_shake_duration = 0     
+camera_pos = [0.0, 0.0, 0.0] 
+fovY = 75
+ARENA_WIDTH = 1000
+ARENA_HEIGHT = 500
 ARENA_DEPTH = 3000.0
 
 # --- Testing Flag ---
@@ -57,27 +48,31 @@ pre_game_timer = 0
 PRE_GAME_DURATION = 600
 wave_transition_timer = 0
 WAVE_TRANSITION_DURATION = 180
-player_flash_timer = 0 #<-- ADD THIS LINE
+player_flash_timer = 0 
+
 # --- Wave System ---
 current_wave = 0
-enemies_per_wave = 2
-enemy_bullet_speed_multiplier = 1.0
+enemies_per_wave = 5
+enemy_bullet_speed_multiplier = 2.0
 
 # --- Player ---
 player_pos = [0.0, 0.0, 0.0]
 player_max_health = 100
 player_health = 100
-player_speed = 5.0 
-player_radius = 12.0
+player_speed = 3.0 
+# --- Radius for collision detection ---
+# (Increased to account for wind damage and make the game harder)
+player_radius = 20.0
 
 # --- Input Timers for Fluid Movement ---
-INPUT_TIMEOUT = 5 
+INPUT_TIMEOUT = 7 
 player_move_y_timer = 0; player_move_y_dir = 0
 player_move_x_timer = 0; player_move_x_dir = 0
 crosshair_move_y_timer = 0; crosshair_move_y_dir = 0
 crosshair_move_x_timer = 0; crosshair_move_x_dir = 0
 fire_timer = 0
-time_scale = 1.0 #<-- ADD THIS LINE
+
+
 
 # --- Crosshair ---
 crosshair_pos = [0.0, 0.0, ARENA_DEPTH - 800] 
@@ -106,8 +101,8 @@ EVADE_COOLDOWN_MAX = 50
 # --- Overheat system ---
 heat_level = 0
 heat_max = 100
-heat_per_shot = 15
-heat_cool_rate = 0.05
+heat_per_shot = 20
+heat_cool_rate = 0.08
 overheated = False
 
 # --- High-Score System ---
@@ -118,20 +113,16 @@ player_name = ""
 name_input_mode = False
 
 # --- Stamina System ---
-# Stamina is the resource for sprinting and quick evades.
-# - Evade is intentionally pricey now (~50) so you can't spam it.
-# - Recharge rate is intentionally low so stamina management actually matters.
-# --- Stamina System ---
 stamina_level = 100
 stamina_max = 100
-stamina_regen_rate = 0.2
+stamina_regen_rate = 0.03
 stamina_sprint_drain = 0.25
 stamina_evade_cost = 50
 is_sprinting = False 
 fatigued = False
 fatigue_threshold = 20
-sprint_speed_multiplier = 2.0
-fatigue_speed_penalty = 0.6
+sprint_speed_multiplier = 3.0
+fatigue_speed_penalty = 0.3
 
 # --- Skill System ---
 player_level = 1
@@ -152,17 +143,21 @@ SKILL_COSTS = {
     'faster_evasion': [1, 2, 3], 'weapon_power': [1, 2, 4],
     'heat_management': [1, 2, 3], 'stamina_efficiency': [1, 3, 4],
     'health_boost': [2, 3, 5]
+    
 }
-SPECIAL_ABILITIES = ["DAMAGE_BOOST", "TELEPORT", "SHIELD_BUBBLE", "TIME_SLOW"]
+SPECIAL_ABILITIES = ["DAMAGE_BOOST", "SHIELD_BUBBLE", "TELEPORT", "TIME_SLOW"]
+
+# --- Time Slow Powerup variable ---
+time_scale = 1.0 
 
 # --- V-Menu Abilities ---
 mobility_boost_active = False
 mobility_boost_timer = 0
-MOBILITY_BOOST_DURATION = 60 * 60 
+MOBILITY_BOOST_DURATION = 2 * 60 * 60 
 MOBILITY_BOOST_MULTIPLIER = 5.0
 weapon_mastery_active = False
 weapon_mastery_timer = 0
-WEAPON_MASTERY_DURATION = 60 * 60 
+WEAPON_MASTERY_DURATION = 2 * 60 * 60 
 WEAPON_MASTERY_DAMAGE_MULT = 1.5
 
 # --- Enemy AI ---
@@ -170,8 +165,8 @@ enemies = []
 enemy_bullets = []
 asteroids = []
 boss = None
-max_enemies = 5
-obstacles = [] #<-- ADD THIS LINE
+max_enemies = 10
+obstacles = [] 
 
 # =============================
 # Classes
@@ -567,9 +562,9 @@ def trigger_camera_shake(intensity, duration):
     camera_shake_duration += duration
 def apply_skill_effects():
     global player_max_health, heat_cool_rate, stamina_regen_rate, stamina_sprint_drain
-    player_max_health = 100 + (skill_health_boost * 30); heat_cool_rate = 0.05 + (skill_heat_management * 0.05)
-    stamina_regen_rate = 0.2 + (skill_stamina_efficiency * 0.1)
-    base_sprint_drain = 0.15; stamina_sprint_drain = max(0.05, base_sprint_drain - (skill_stamina_efficiency * 0.05))
+    player_max_health = 100 + (skill_health_boost * 30); heat_cool_rate = 0.06 + (skill_heat_management * 0.05)
+    stamina_regen_rate = 0.06 + (skill_stamina_efficiency * 0.1)
+    base_sprint_drain = 0.06; stamina_sprint_drain = max(0.02, base_sprint_drain - (skill_stamina_efficiency * 0.05))
 def can_upgrade_skill(skill_name):
     level = globals()[f'skill_{skill_name}']; 
     if level >= 3: return False
@@ -1104,7 +1099,7 @@ def draw_skill_menu():
     glVertex3f(200, 150, 0); glVertex3f(800, 150, 0); glVertex3f(800, 650, 0); glVertex3f(200, 650, 0); glEnd()
     glColor3f(*NEON_CYAN); draw_text(380, 600, "--- SKILL UPGRADES ---")
     glColor3f(*ENERGY_YELLOW); draw_text(220, 560, f"Level: {player_level} | Skill Points: {skill_points}")
-    skill_names = ['1. MOBILITY BOOST (1 PT)', '2. WEAPON MASTERY (1 PT)', '3. FASTER EVASION', '4. WEAPON POWER', '5. HEAT MANAGEMENT', '6. STAMINA EFFICIENCY', '7. HEALTH BOOST']
+    skill_names = ['1. MOBILITY BOOST for 2 mins (1 PT)', '2. WEAPON MASTERY for 2 mins (1 PT) ', '3. FASTER EVASION', '4. WEAPON POWER', '5. HEAT MANAGEMENT', '6. STAMINA EFFICIENCY', '7. HEALTH BOOST AND RESTORE']
     skill_vars = [None, None, 'skill_faster_evasion', 'skill_weapon_power', 'skill_heat_management', 'skill_stamina_efficiency', 'skill_health_boost']
     y_pos = 500
     for i in range(len(skill_names)):
@@ -1265,6 +1260,7 @@ def idle():
     if player_move_x_timer > 0: player_pos[0] += player_move_x_dir * get_current_speed(); player_move_x_timer -= 1
     if crosshair_move_y_timer > 0: crosshair_pos[1] += crosshair_move_y_dir * crosshair_speed; crosshair_move_y_timer -= 1
     if crosshair_move_x_timer > 0: crosshair_pos[0] += crosshair_move_x_dir * crosshair_speed; crosshair_move_x_timer -= 1
+    # Continuous Bullets for a laser effect using fire_timer
     if fire_timer > 0 and game_state == "PLAYING": fire_weapon(); fire_timer -=1
     player_pos[0] = max(-ARENA_WIDTH, min(ARENA_WIDTH, player_pos[0])); player_pos[1] = max(-ARENA_HEIGHT, min(ARENA_HEIGHT, player_pos[1]))
     crosshair_pos[0] = max(-ARENA_WIDTH, min(ARENA_WIDTH, crosshair_pos[0])); crosshair_pos[1] = max(-ARENA_HEIGHT, min(ARENA_HEIGHT, crosshair_pos[1]))
