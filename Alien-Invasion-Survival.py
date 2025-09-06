@@ -844,7 +844,7 @@ def cycle_special_ability():
 def start_next_wave():
     global current_wave, enemies_per_wave, enemy_bullet_speed_multiplier, boss
     current_wave += 1
-    if current_wave > 0 and current_wave % 1 == 0:
+    if current_wave > 0 and current_wave % 5 == 0:
         boss = Boss()
     else:
         enemies_per_wave = min(10, 2 + (current_wave - 1) // 2)
