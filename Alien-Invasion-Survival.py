@@ -1072,8 +1072,8 @@ def gain_experience(points):
     while experience_points >= experience_to_next_level:
         experience_points -= experience_to_next_level; player_level += 1; skill_points += 1
         experience_to_next_level = int(experience_to_next_level * 1.2)
-# Replace the ENTIRE fire_weapon() function with this new version
-def fire_weapon_simplified():
+
+def fire_weapon():
     """
     Fires a bullet from the ship.
 
