@@ -147,6 +147,16 @@ SKILL_COSTS = {
 }
 SPECIAL_ABILITIES = ["DAMAGE_BOOST", "SHIELD_BUBBLE", "TELEPORT", "TIME_SLOW"]
 
+# Current player levels (0 = not upgraded yet)
+skill_levels = {name: 0 for name in SKILL_COSTS}
+
+# Temporary skills (only unlock once, last for 2 minutes)
+temp_skills = {
+    'mobility_boost': {"cost": 1, "active": False, "duration": 0},
+    'weapon_mastery': {"cost": 1, "active": False, "duration": 0}
+}
+
+
 # --- Time Slow Powerup variable ---
 time_scale = 1.0 
 
@@ -171,7 +181,6 @@ obstacles = []
 # =============================
 # Classes
 # =============================
-# Replace the ENTIRE Obstacle class with this one
 class Obstacle:
     def __init__(self, pos, size, type):
         self.pos = list(pos)
@@ -179,7 +188,7 @@ class Obstacle:
         self.size = size
         self.type = type # 'DESTRUCTIBLE' or 'PUSHABLE'
         self.active = True
-        self.velocity = [0, 0, 0]
+     
         self.health = 100
         self.respawn_timer = -1 # -1 means not waiting to respawn
 
@@ -199,28 +208,25 @@ class Obstacle:
                 # Timer finished, reset the obstacle
                 self.active = True
                 self.health = 100
-                self.pos = list(self.original_pos)
-                self.velocity = [0, 0, 0]
+                # Random Position
+                self.pos[0] = random.uniform(-ARENA_WIDTH * 0.9, ARENA_WIDTH * 0.9)
+                self.pos[1] = random.uniform(-ARENA_HEIGHT * 0.9, ARENA_HEIGHT * 0.9)
+                self.pos[2] = random.uniform(ARENA_DEPTH * 0.2, ARENA_DEPTH * 0.8)
+               
                 self.respawn_timer = -1
-        
-        # Apply velocity for pushable objects if active
-        if self.active:
-            self.pos[0] += self.velocity[0]
-            self.pos[1] += self.velocity[1]
-            self.pos[2] += self.velocity[2]
-            # Apply friction/drag
-            self.velocity[0] *= 0.95
-            self.velocity[1] *= 0.95
-            self.velocity[2] *= 0.95
 
     def draw(self):
         if not self.active: return
         glPushMatrix()
         glTranslatef(self.pos[0], self.pos[1], self.pos[2])
-        color = (0.7, 0.5, 0.3) if self.type == 'DESTRUCTIBLE' else (0.6, 0.6, 0.7)
+        if self.type == 'DESTRUCTIBLE':
+            color = (0.7, 0.5, 0.3)
+        else:
+            color = (0.6, 0.6, 0.7)
         glColor3f(*color)
         glutSolidCube(self.size)
         glPopMatrix()
+
 class Bullet:
     def __init__(self, start_pos, vector):
         self.pos = list(start_pos)
@@ -236,20 +242,33 @@ class Bullet:
             self.pos[0] += self.vector[0] * current_speed
             self.pos[1] += self.vector[1] * current_speed
             self.pos[2] += self.vector[2] * current_speed
-            if self.pos[2] > ARENA_DEPTH + 200 or self.pos[2] < -200: self.active = False
+            if self.pos[2] > ARENA_DEPTH + 200 or self.pos[2] < -200: 
+                self.active = False
 
     def draw(self):
         if not self.active: return
         glPushMatrix()
         glTranslatef(self.pos[0], self.pos[1], self.pos[2])
-        try:
+
+        # We only need to calculate rotation if the vector has a length.
+        # If the vector is [0, 0, 0], it has no direction, so we can skip rotation.
+        if self.vector[0] != 0 or self.vector[1] != 0 or self.vector[2] != 0:
+
+            # --- Calculate Y-axis rotation (Yaw) ---
+            # This orients the laser based on its X and Z direction.
             angle_y = -math.degrees(math.atan2(self.vector[2], self.vector[0])) + 90
             glRotatef(angle_y, 0, 1, 0)
+            
+            # --- Calculate X-axis rotation (Pitch) ---
+            # This tilts the laser up or down.
             v_horiz = math.sqrt(self.vector[0]**2 + self.vector[2]**2)
-            angle_x = -math.degrees(math.atan2(self.vector[1], v_horiz)) if v_horiz > 0 else 0
+            
+            # We can calculate angle_x directly. math.atan2 handles the case where
+            # v_horiz is 0, which fixes the bug for vertical vectors.
+            angle_x = -math.degrees(math.atan2(self.vector[1], v_horiz))
             glRotatef(angle_x, 1, 0, 0)
-        except ValueError: pass
         
+        # --- Draw the laser cylinder ---
         glColor3f(*ENERGY_YELLOW)
         laser_length = 80.0 + (skill_weapon_power * 20)
         laser_width = 1.5 + (skill_weapon_power * 0.5)
@@ -264,37 +283,44 @@ class EnemyBullet:
         self.vector = [0, 0, -1] 
         base_speed = 1.0
         if self.type == 'FAST':
-            base_speed = 1.4; self.damage = 3; self.radius = 4.0
-            self.color = (1.0, 0.6, 0.0); self.vector = [0, 0, -1] 
+            base_speed = 1.7; self.damage = 5; self.radius = 7.0
+            self.color = (2.0, 0.6, 0.0); self.vector = [0, 0, -1] 
+        if self.type == 'WALL':
+            base_speed = 1.7; self.damage = 10; self.radius = 7.0
+            self.color = (2.0, 0.6, 0.0); self.vector = [0, 0, -1] 
         elif self.type == 'HOMING':
-            base_speed = 0.6; self.damage = 5; self.radius = 5.0; self.color = NEON_PINK
+            base_speed = 1.4; self.damage = 10; self.radius = 9.0; self.color = NEON_PINK
         elif self.type == 'BIG':
-            base_speed = 0.9; self.damage = 10; self.radius = 8.0; self.color = ENEMY_PURPLE
-        
+            base_speed = 1; self.damage = 15; self.radius = 15.0; self.color = NEON_CYAN
         self.speed = base_speed * enemy_bullet_speed_multiplier
-
-        if self.type != 'FAST':
+        if self.type != "WALL":
             dir_x, dir_y, dir_z = player_pos[0] - self.pos[0], player_pos[1] - self.pos[1], player_pos[2] - self.pos[2]
             dist = math.sqrt(dir_x**2 + dir_y**2 + dir_z**2)
             if dist > 0: self.vector = [dir_x / dist, dir_y / dist, dir_z / dist]
 
     def update(self):
-        if not self.active: return
-        self.pos[0] += self.vector[0] * self.speed * time_scale; self.pos[1] += self.vector[1] * self.speed * time_scale; self.pos[2] += self.vector[2] * self.speed * time_scale
-        if self.pos[2] < -100: self.active = False
+        if not self.active: 
+            return
+        self.pos[0] += self.vector[0] * self.speed * time_scale; 
+        self.pos[1] += self.vector[1] * self.speed * time_scale; 
+        self.pos[2] += self.vector[2] * self.speed * time_scale
+        if self.pos[2] < -100: 
+            self.active = False
             
     def draw(self):
-        if not self.active: return
+        if not self.active: 
+            return
         glPushMatrix(); glTranslatef(self.pos[0], self.pos[1], self.pos[2])
-        glColor3f(*self.color); gluSphere(gluNewQuadric(), self.radius, 10, 8); glPopMatrix()
+        glColor3f(*self.color); gluSphere(gluNewQuadric(), self.radius, 10, 8); 
+        glPopMatrix()
 
 class Asteroid:
     def __init__(self, start_pos, target_pos=None):
         self.pos = list(start_pos)
         self.active = True
-        self.speed = 2.0 * enemy_bullet_speed_multiplier
-        self.damage = 40
-        self.radius = 60.0
+        self.speed = 1.2 * enemy_bullet_speed_multiplier
+        self.damage = 20
+        self.radius = 80.0
         
         aim_pos = target_pos if target_pos is not None else player_pos
         
@@ -303,14 +329,20 @@ class Asteroid:
         self.vector = [dir_x / dist, dir_y / dist, dir_z / dist] if dist > 0 else [0,0,-1]
     
     def update(self):
-        if not self.active: return
-        self.pos[0] += self.vector[0] * self.speed * time_scale; self.pos[1] += self.vector[1] * self.speed * time_scale; self.pos[2] += self.vector[2] * self.speed * time_scale
-        if self.pos[2] < -100: self.active = False
+        if not self.active: 
+            return
+        self.pos[0] += self.vector[0] * self.speed * time_scale; 
+        self.pos[1] += self.vector[1] * self.speed * time_scale; 
+        self.pos[2] += self.vector[2] * self.speed * time_scale
+        if self.pos[2] < -100: 
+            self.active = False
 
     def draw(self):
-        if not self.active: return
+        if not self.active: 
+            return
         glPushMatrix(); glTranslatef(self.pos[0], self.pos[1], self.pos[2])
-        glColor3f(*ASTEROID_GREY); gluSphere(gluNewQuadric(), self.radius, 5, 5); glPopMatrix()
+        glColor3f(*ASTEROID_GREY); gluSphere(gluNewQuadric(), self.radius, 5, 5); 
+        glPopMatrix()
 
 class Enemy:
     def __init__(self):
@@ -318,19 +350,19 @@ class Enemy:
         if roll < 0.5: self.type = 'GRUNT'
         elif roll < 0.8: self.type = 'WARPER'
         else: self.type = 'GUARDIAN'
-        self.flash_timer = 0 #<-- ADD THIS LINE
+        self.flash_timer = 0 
         self.pos = [random.uniform(-ARENA_WIDTH*0.8, ARENA_WIDTH*0.8), random.uniform(-ARENA_HEIGHT*0.8, ARENA_HEIGHT*0.8), ARENA_DEPTH]
         self.target_z = ARENA_DEPTH - random.uniform(400, 800)
         self.active = True
         
         if self.type == 'GRUNT':
-            self.health = 30; self.radius = 50.0; self.color = (0.8, 0.2, 0.2); self.fire_rate = 480; self.move_speed = 0.2
+            self.health = 60; self.radius = 50.0; self.color = (0.8, 0.2, 0.2); self.fire_rate = 700; self.move_speed = 0.2
             self.score_value = 100; self.xp_value = 5
         elif self.type == 'GUARDIAN':
-            self.health = 30; self.shield_health = 15; self.radius = 70.0; self.color = (0.5, 0.2, 0.8); self.fire_rate = 480; self.move_speed = 0.1
+            self.health = 100; self.shield_health = 30; self.radius = 70.0; self.color = (0.5, 0.2, 0.8); self.fire_rate = 480; self.move_speed = 0.1
             self.score_value = 250; self.xp_value = 15
         elif self.type == 'WARPER':
-            self.health = 30; self.radius = 40.0; self.color = (1.0, 1.0, 0.0); self.fire_rate = 480; self.warp_cooldown = 2400
+            self.health = 30; self.radius = 40.0; self.color = (1.0, 1.0, 0.0); self.fire_rate = 600; self.warp_cooldown = 1800
             self.score_value = 150; self.xp_value = 10
 
         self.fire_cooldown = random.randint(self.fire_rate, self.fire_rate + 120) * time_scale
@@ -339,8 +371,8 @@ class Enemy:
     def update(self):
         if self.pos[2] > self.target_z:
             self.pos[2] -= 15; return 
-        if self.flash_timer > 0: #<-- ADD THIS
-            self.flash_timer -= 1 #<-- ADD THIS
+        if self.flash_timer > 0: 
+            self.flash_timer -= 1
         if self.type == 'GRUNT' or self.type == 'GUARDIAN':
             self.pos[0] += self.move_speed * self.move_direction * time_scale
             if abs(self.pos[0]) > ARENA_WIDTH * 0.9: self.move_direction *= -1
@@ -348,29 +380,35 @@ class Enemy:
         if self.type == 'WARPER':
             self.warp_cooldown -= 1
             if self.warp_cooldown <= 0:
-                self.pos = [random.uniform(-ARENA_WIDTH*0.8, ARENA_WIDTH*0.8), random.uniform(-ARENA_HEIGHT*0.8, ARENA_HEIGHT*0.8), random.uniform(ARENA_DEPTH * 0.7, ARENA_DEPTH - 500)]
+                self.pos = [random.uniform(-ARENA_WIDTH*0.8, ARENA_WIDTH*0.8), random.uniform(-ARENA_HEIGHT*0.8, ARENA_HEIGHT*0.8), ARENA_DEPTH]
                 self.warp_cooldown = random.randint(2400, 2600)
 
         self.fire_cooldown -= 1
         if self.fire_cooldown <= 0:
-            bullet_type = 'BIG'
-            if self.type == 'GRUNT': bullet_type = 'HOMING'
+            if self.type == 'GUARDIAN': bullet_type = 'BIG'
+            elif self.type == 'GRUNT': bullet_type = 'FAST'
             elif self.type == 'WARPER': bullet_type = 'HOMING'
             enemy_bullets.append(EnemyBullet(self.pos, bullet_type))
             self.fire_cooldown = random.randint(self.fire_rate, self.fire_rate + 120)
 
     def take_damage(self, amount):
         global current_score
-        self.flash_timer = 10
-        if self.type == 'GUARDIAN' and self.shield_health > 0: self.shield_health -= amount
-        else: self.health -= amount
+        self.flash_timer = 15
+        if self.type == 'GUARDIAN' and self.shield_health > 0: 
+            self.shield_health -= amount
+        else: 
+            self.health -= amount
         if self.health <= 0: 
-            self.active = False; current_score += self.score_value; gain_experience(self.xp_value)
+            self.active = False; 
+            current_score += self.score_value; 
+            gain_experience(self.xp_value)
      
     
     def draw(self):
-        if not self.active: return
-        glPushMatrix(); glTranslatef(self.pos[0], self.pos[1], self.pos[2])
+        if not self.active: 
+            return
+        glPushMatrix(); 
+        glTranslatef(self.pos[0], self.pos[1], self.pos[2])
 
         # --- Hit Flash Logic ---
         color_to_use = self.color
@@ -387,7 +425,7 @@ class Enemy:
             glPushMatrix(); glScalef(1.2, 1.0, 1.0); glutSolidCube(self.radius * 0.8); glPopMatrix()
             glColor3f(0.3, 0.3, 0.3) # Cannons are always dark
             glPushMatrix(); glTranslatef(self.radius * 0.6, 0, 0); gluCylinder(gluNewQuadric(), self.radius*0.2, self.radius*0.2, self.radius * 0.5, 8, 1); glPopMatrix()
-            glPushMatrix(); glTranslatef(-self.radius * 0.6, 0, 0); glRotatef(180, 0, 1, 0); gluCylinder(gluNewQuadric(), self.radius*0.2, self.radius*0.2, self.radius * 0.5, 8, 1); glPopMatrix()
+            glPushMatrix(); glTranslatef(-self.radius * 0.6, 0, 0); gluCylinder(gluNewQuadric(), self.radius*0.2, self.radius*0.2, self.radius * 0.5, 8, 1); glPopMatrix()
         elif self.type == 'WARPER':
             glColor3f(*color_to_use); glRotatef(game_time, 0.5, 1, 0.3); glutSolidCube(self.radius); glColor3f(0.8, 0.8, 0.2)
             glPushMatrix(); glTranslatef(0, 0, self.radius*0.5); glScalef(0.1, 0.1, 1.5); glutSolidCube(self.radius); glPopMatrix()
@@ -396,163 +434,298 @@ class Enemy:
             glPushMatrix(); glTranslatef(-self.radius*0.5, 0, 0); glScalef(1.5, 0.1, 0.1); glutSolidCube(self.radius); glPopMatrix()
 
         if self.type == 'GUARDIAN' and self.shield_health > 0:
-            pulse = 0.8 + 0.2 * math.sin(game_time * 0.1)
+            pulse = 0.7 + 0.2 * math.sin(game_time * 0.1)
             glColor3f(NEON_CYAN[0]*pulse, NEON_CYAN[1]*pulse, NEON_CYAN[2]*pulse)
             gluSphere(gluNewQuadric(), self.radius, 16, 12)
         glPopMatrix()
-# Replace your entire "class Boss:" block with this one
+
 class Boss:
+    """
+    Represents the boss enemy in the game.
+    The boss uses multiple AI states:
+    - ENTERING: moves into the arena.
+    - IDLE: waits, then picks an attack pattern.
+    - TELEGRAPH_*: shows warning effects before attacking.
+    - SWEEPING: fires a sweeping bullet pattern.
+    - ASTEROID: launches asteroid attacks.
+    - WALL_ATTACK: spawns horizontal wall bullets with a moving gap.
+    - VULNERABLE: temporarily weak to extra damage.
+    """
+
     def __init__(self):
-        self.max_health = 200 + (current_wave * 150)
+        # --- Core Stats ---
+        self.max_health = 800 + (current_wave * 150)
         self.health = self.max_health
         self.radius = 150.0
-        self.color = (0.4, 0.4, 0.5) # Metallic Grey
+        self.color = (0.4, 0.4, 0.5)  # Metallic Grey
         self.ring_color = self.color
+
+        # --- Positioning ---
         self.pos = [0, 0, ARENA_DEPTH + 300]
         self.target_pos = [0, 0, ARENA_DEPTH - 800]
+
+        # --- State Flags ---
         self.active = True
         self.phase = 1
         self.ai_state = "ENTERING"
         self.ai_timer = 0
         self.sweep_angle = -90.0
         self.charge_particles = []
-        self.flash_timer = 0 #<-- ADD THIS LINE
-    # In the Boss class
+        self.flash_timer = 0
+
+        # --- Wall Attack Variables (NEW) ---
+        self.gap_pos_x = 0
+        self.gap_width = 75
+        self.gap_direction = 1  # 1 = move right, -1 = move left
+        self.wall_spawn_timer = 0
+
     def take_damage(self, amount):
+        """
+        Apply damage to the boss.
+        Damage is multiplied if the boss is vulnerable.
+        Handles phase transitions and death.
+        """
         global current_score, skill_points, game_state, wave_transition_timer
         self.flash_timer = 10
-        damage_multiplier = 2.0 if self.ai_state == "VULNERABLE" else 1.0
+        damage_multiplier = 2.0 if self.ai_state == "VULNERABLE" else 3.0
         self.health -= amount * damage_multiplier
-        
+
+        # Phase shift to Phase 2
         if self.phase == 1 and self.health <= self.max_health / 2:
             self.phase = 2
-            self.ai_state = "IDLE" 
+            self.ai_state = "IDLE"
             self.ai_timer = 120
 
+        # Boss death
         if self.health <= 0:
             self.active = False
-            current_score += 5000; gain_experience(200); skill_points += 3
-            enemies.clear(); enemy_bullets.clear(); asteroids.clear()
-            spawn_obstacles(10) #<-- ADD THIS LINE to reset the arena
-            game_state = "WAVE_TRANSITION"; wave_transition_timer = WAVE_TRANSITION_DURATION
-            trigger_camera_shake(100.0, 120) #<-- ADD THIS LINE FOR THE EPIC EXPLOSION!
+            current_score += 5000
+            gain_experience(200)
+            skill_points += 3
+            enemies.clear()
+            enemy_bullets.clear()
+            asteroids.clear()
+            spawn_obstacles(20)
+            game_state = "WAVE_TRANSITION"
+            wave_transition_timer = WAVE_TRANSITION_DURATION
+            trigger_camera_shake(200.0, 60)
 
     def update(self):
-        if not self.active: return
-        if self.flash_timer > 0: #<-- ADD THIS
-            self.flash_timer -= 1 #<-- ADD THIS
-        # Update charge particles
+        """Main AI state machine controlling the boss's behavior."""
+        if not self.active:
+            return
+
+        # Hit flash timer
+        if self.flash_timer > 0:
+            self.flash_timer -= 1
+
+        # Charge particles (telegraph visuals)
         for p in self.charge_particles[:]:
-            p['size'] += p['rate']; p['timer'] -= 1
-            if p['timer'] <= 0: self.charge_particles.remove(p)
+            p['size'] += p['rate']
+            p['timer'] -= 1
+            if p['timer'] <= 0:
+                self.charge_particles.remove(p)
 
         # --- AI State Machine ---
         if self.ai_state == "ENTERING":
             self.pos[2] -= 5 * time_scale
-            if self.pos[2] <= self.target_pos[2]: self.ai_state = "IDLE"; self.ai_timer = 120
-        
+            if self.pos[2] <= self.target_pos[2]:
+                self.ai_state = "IDLE"
+                self.ai_timer = 120
+
         elif self.ai_state == "IDLE":
             self.ai_timer -= 1 * time_scale
             if self.ai_timer <= 0:
                 roll = random.random()
-                if self.phase == 2 and roll < 0.25: self.ai_state = "TELEGRAPH_VERTICAL_WALL"; self.ai_timer = 120
-                elif roll < 0.5: self.ai_state = "TELEGRAPH_WALL"; self.ai_timer = 120
-                elif roll < 0.75: self.ai_state = "TELEGRAPH_ASTEROID"; self.ai_timer = 180
-                else: self.ai_state = "TELEGRAPH_SWEEP"; self.ai_timer = 90
-        
+                if roll < 0.4:
+                    self.ai_state = "TELEGRAPH_WALL"
+                    self.ai_timer = 150
+                elif roll < 0.7:
+                    self.ai_state = "TELEGRAPH_ASTEROID"
+                    self.ai_timer = 200
+                else:
+                    self.ai_state = "TELEGRAPH_SWEEP"
+                    self.ai_timer = 120
+
         # --- Telegraph States ---
         elif self.ai_state == "TELEGRAPH_ASTEROID":
             self.ai_timer -= 1
-            if self.ai_timer % 15 == 0: self.charge_particles.append({'pos': [random.uniform(-50,50), random.uniform(-50,50), 0], 'size':1, 'rate':1.5, 'timer':15, 'color': ASTEROID_GREY})
-            if self.ai_timer <= 0: self.ai_state = "ASTEROID"; self.ai_timer = 10
+            if self.ai_timer % 5 == 0:
+                self.charge_particles.append({
+                    'pos': [random.uniform(-50, 50), random.uniform(-50, 50), 0],
+                    'size': 3,
+                    'rate': 1.5,
+                    'timer': 15,
+                    'color': ASTEROID_GREY
+                })
+            if self.ai_timer <= 0:
+                self.ai_state = "ASTEROID"
+                self.ai_timer = 300
+
         elif self.ai_state == "TELEGRAPH_SWEEP":
             self.ai_timer -= 1
-            if self.ai_timer <= 0: self.ai_state = "SWEEPING"; self.ai_timer = 1800
-        elif self.ai_state == "TELEGRAPH_WALL" or self.ai_state == "TELEGRAPH_VERTICAL_WALL":
-            self.ai_timer -= 1
-            if self.ai_timer <= 0: 
-                self.ai_state = "WALL_ATTACK" if self.ai_state == "TELEGRAPH_WALL" else "VERTICAL_WALL_ATTACK"
-                self.ai_timer = 240
-        
+            if self.ai_timer <= 0:
+                self.ai_state = "SWEEPING"
+                self.ai_timer = 1800
+
+        elif self.ai_state == "TELEGRAPH_WALL":
+            self.ai_timer -= 1 * time_scale
+            if self.ai_timer <= 0:
+                # Set up the moving gap wall attack
+                self.ai_state = "WALL_ATTACK"
+                self.gap_pos_x = random.uniform(-ARENA_WIDTH / 2, ARENA_WIDTH / 2)
+                self.gap_width = 75
+                self.gap_direction = random.choice([-1, 1])
+                self.ai_timer = 240  # total attack duration
+                self.wall_spawn_timer = 40  # spawns rows for 40 frames
+
         # --- Attack States ---
         elif self.ai_state == "SWEEPING":
-            self.ai_timer -= 1; self.pos[0] = math.sin(game_time * 0.02 * time_scale) * 200
+            self.ai_timer -= 1
+            self.pos[0] = math.sin(game_time * 0.02 * time_scale) * 200
             if self.ai_timer % 3 == 0:
                 angle_rad = math.radians(self.sweep_angle)
-                start_pos = [self.pos[0] + math.cos(angle_rad)*self.radius, self.pos[1] + math.sin(angle_rad)*self.radius, self.pos[2]]
-                bullet = EnemyBullet(start_pos, 'BIG'); bullet.speed *= 2.5
+                start_pos = [
+                    self.pos[0] + math.cos(angle_rad) * self.radius,
+                    self.pos[1] + math.sin(angle_rad) * self.radius,
+                    self.pos[2]
+                ]
+                bullet = EnemyBullet(start_pos, 'BIG')
+                bullet.speed *= 2.5
                 bullet.vector[1] += random.uniform(-0.1, 0.1)
                 enemy_bullets.append(bullet)
                 self.sweep_angle += 0.5 if self.phase == 1 else 0.75
-            if self.ai_timer <= 0: self.pos[0] = 0; self.ai_state = "VULNERABLE"; self.ai_timer = 300 # Vulnerable for 5 secs
-        
+            if self.ai_timer <= 0:
+                self.pos[0] = 0
+                self.ai_state = "VULNERABLE"
+                self.ai_timer = 600
+
         elif self.ai_state == "ASTEROID":
             self.ai_timer -= 1
             if self.ai_timer <= 0:
                 asteroids.append(Asteroid(self.pos))
-                for _ in range(2):
+                for _ in range(4):
                     offset = [random.uniform(-200, 200), random.uniform(-150, 150), 0]
-                    target_pos = [player_pos[0] + offset[0], player_pos[1] + offset[1], player_pos[2]]
+                    target_pos = [
+                        player_pos[0] + offset[0],
+                        player_pos[1] + offset[1],
+                        player_pos[2]
+                    ]
                     asteroids.append(Asteroid(self.pos, target_pos=target_pos))
-                self.ai_state = "VULNERABLE"; self.ai_timer = 240 # Vulnerable for 4 secs
-        
+                self.ai_state = "VULNERABLE"
+                self.ai_timer = 300
+
         elif self.ai_state == "WALL_ATTACK":
-            self.ai_timer -= 1
-            if self.ai_timer in [240, 180, 120, 60]:
-                gap_pos = random.uniform(-ARENA_WIDTH + 150, ARENA_WIDTH - 150)
-                for y_offset in [-60, 0, 60]: # Creates 3 rows
-                    for x in range(int(-ARENA_WIDTH*1.5), int(ARENA_WIDTH*1.5), 75):
-                        if abs(x - gap_pos) < 75: continue
-                        bullet = EnemyBullet([x, self.pos[1] + y_offset, self.pos[2]], 'FAST'); bullet.speed *= 3
-                        enemy_bullets.append(bullet)
-            if self.ai_timer <= 0: self.ai_state = "VULNERABLE"; self.ai_timer = 240
-        
-        elif self.ai_state == "VERTICAL_WALL_ATTACK":
-            self.ai_timer -= 1
-            if self.ai_timer in [240, 180, 120, 60]:
-                gap_pos = random.uniform(-ARENA_HEIGHT + 150, ARENA_HEIGHT - 150)
-                for y in range(int(-ARENA_HEIGHT*1.5), int(ARENA_HEIGHT*1.5), 75):
-                    if abs(y - gap_pos) < 75: continue
-                    bullet = EnemyBullet([self.pos[0], y, self.pos[2]], 'FAST'); bullet.speed *= 3
+            self.ai_timer -= 1 * time_scale
+
+            # Move the safe gap horizontally during attack
+            gap_speed = 8 * time_scale
+            self.gap_pos_x += self.gap_direction * gap_speed
+            if self.gap_pos_x > ARENA_WIDTH / 2 - self.gap_width:
+                self.gap_pos_x = ARENA_WIDTH / 2 - self.gap_width
+                self.gap_direction = -1
+            elif self.gap_pos_x < -ARENA_WIDTH / 2 + self.gap_width:
+                self.gap_pos_x = -ARENA_WIDTH / 2 + self.gap_width
+                self.gap_direction = 1
+
+            # Spawn wall rows with a moving gap
+            if self.wall_spawn_timer > 0:
+                self.wall_spawn_timer -= 1 * time_scale
+                progress = self.wall_spawn_timer / 40.0
+                y_offset = -200 + (1.0 - progress) * 400
+
+                # Instead of dozens of small bullets, we place ~6 large bullets
+                num_columns = 10  # drastically fewer
+                spacing = ARENA_WIDTH / num_columns
+
+                for i in range(num_columns):
+                    x = -ARENA_WIDTH / 2 + i * spacing + spacing / 2
+                    
+                    # Skip the safe gap
+                    if abs(x - self.gap_pos_x) < self.gap_width:
+                        continue
+                    
+                    start_pos = [x, player_pos[1] + y_offset, self.pos[2]]
+                    bullet = EnemyBullet(start_pos, 'WALL')
+                    bullet.speed *= 1.5
+                    
+                    # Make wall bullets visually larger & cover more space
+                    bullet.radius = 40
+                    
                     enemy_bullets.append(bullet)
-            if self.ai_timer <= 0: self.ai_state = "VULNERABLE"; self.ai_timer = 240
+
+            if self.ai_timer <= 0:
+                self.ai_state = "VULNERABLE"
+                self.ai_timer = 240
 
         elif self.ai_state == "VULNERABLE":
-            self.pos[0] *= 0.95; self.pos[1] *= 0.95 # Drift back to center
+            self.pos[0] *= 0.95
+            self.pos[1] *= 0.95
             self.ai_timer -= 1
-            if self.ai_timer <= 0: self.ai_state = "IDLE"; self.ai_timer = 120
+            if self.ai_timer <= 0:
+                self.ai_state = "IDLE"
+                self.ai_timer = 120
 
     def draw(self):
-        if not self.active: return
-        glPushMatrix(); glTranslatef(self.pos[0], self.pos[1], self.pos[2])
+        """Draw the boss model and its telegraph effects."""
+        if not self.active:
+            return
+        glPushMatrix()
+        glTranslatef(self.pos[0], self.pos[1], self.pos[2])
 
-        # --- Color Selection Logic ---
-        core_color = WARNING_RED; self.ring_color = self.color
-        if self.phase == 2: core_color = ENERGY_YELLOW
-        if self.ai_state == "VULNERABLE": core_color = NEON_GREEN
-        elif self.ai_state == "TELEGRAPH_ASTEROID": self.ring_color = ASTEROID_GREY
-        elif self.ai_state == "TELEGRAPH_SWEEP": self.ring_color = (1,1,1)
-        elif self.ai_state == "TELEGRAPH_WALL" or self.ai_state == "TELEGRAPH_VERTICAL_WALL": self.ring_color = NEON_CYAN
+        # --- Core color based on state ---
+        core_color = WARNING_RED
+        self.ring_color = self.color
+        if self.phase == 2:
+            core_color = ENERGY_YELLOW
+        if self.ai_state == "VULNERABLE":
+            core_color = NEON_GREEN
+        elif self.ai_state == "TELEGRAPH_ASTEROID":
+            self.ring_color = ASTEROID_GREY
+        elif self.ai_state == "TELEGRAPH_SWEEP":
+            self.ring_color = (1, 1, 1)
+        elif self.ai_state == "TELEGRAPH_WALL":
+            self.ring_color = NEON_CYAN
 
-        # --- Hit Flash Override ---
+        # --- Flash effect when hit ---
         if self.flash_timer > 0:
-            core_color = (0.5, 1.0, 0.5); self.ring_color = (0.5, 1.0, 0.5)
+            core_color = (0.5, 1.0, 0.5)
+            self.ring_color = (0.5, 1.0, 0.5)
 
-        # --- Draw Model ---
+        # --- Draw body ---
         pulse = 0.5 + 0.5 * math.sin(game_time * 0.2)
-        glColor3f(core_color[0]*pulse, core_color[1]*pulse, core_color[2]*pulse)
+        glColor3f(core_color[0] * pulse, core_color[1] * pulse, core_color[2] * pulse)
         gluSphere(gluNewQuadric(), self.radius * 0.6, 16, 12)
+
+        # --- Draw rotating rings ---
         glColor3f(*self.ring_color)
-        glPushMatrix(); glRotatef(game_time, 1, 1, 1); glScalef(1,1,0.2); glutSolidCube(self.radius*2); glPopMatrix()
-        glPushMatrix(); glRotatef(game_time, -1, 1, -1); glScalef(0.2,1,1); glutSolidCube(self.radius*2); glPopMatrix()
-        for p in self.charge_particles:
-            glPushMatrix(); glTranslatef(p['pos'][0], p['pos'][1], p['pos'][2])
-            glColor3f(*p['color']); gluSphere(gluNewQuadric(), p['size'], 6, 6); glPopMatrix()
+        glPushMatrix()
+        glRotatef(game_time, 1, 1, 1)
+        glScalef(1, 1, 0.2)
+        glutSolidCube(self.radius * 2)
         glPopMatrix()
+
+        glPushMatrix()
+        glRotatef(game_time, -1, 1, -1)
+        glScalef(0.2, 1, 1)
+        glutSolidCube(self.radius * 2)
+        glPopMatrix()
+
+        # --- Draw charge particles ---
+        for p in self.charge_particles:
+            glPushMatrix()
+            glTranslatef(p['pos'][0], p['pos'][1], p['pos'][2])
+            glColor3f(*p['color'])
+            gluSphere(gluNewQuadric(), p['size'], 6, 6)
+            glPopMatrix()
+
+        glPopMatrix()
+
 # =============================
 # Game Logic
 # =============================
-# ... (All helper functions are preserved)
+
+
 # In Game Logic section
 
 def trigger_camera_shake(intensity, duration):
@@ -561,21 +734,73 @@ def trigger_camera_shake(intensity, duration):
     camera_shake_intensity += intensity
     camera_shake_duration += duration
 def apply_skill_effects():
-    global player_max_health, heat_cool_rate, stamina_regen_rate, stamina_sprint_drain
-    player_max_health = 100 + (skill_health_boost * 30); heat_cool_rate = 0.06 + (skill_heat_management * 0.05)
-    stamina_regen_rate = 0.06 + (skill_stamina_efficiency * 0.1)
-    base_sprint_drain = 0.06; stamina_sprint_drain = max(0.02, base_sprint_drain - (skill_stamina_efficiency * 0.05))
+    global player_max_health, player_health, heat_cool_rate, stamina_regen_rate, stamina_sprint_drain
+
+    # Health Boost: Increase max health and add the gained health to the current health.
+    new_max_health = 100 + (skill_levels['health_boost'] * 30)
+    if new_max_health > player_max_health:
+        player_health += new_max_health - player_max_health
+    player_max_health = new_max_health
+    player_health = min(player_health, player_max_health) # Ensure health doesn't exceed the new max.
+
+    # Heat Management: Improve the cooling rate of your weapon.
+    heat_cool_rate = 0.08 + (skill_levels['heat_management'] * 0.05)
+
+    # Stamina Efficiency: Increase stamina regeneration and reduce sprint drain.
+    stamina_regen_rate = 0.03 + (skill_levels['stamina_efficiency'] * 0.1)
+    base_sprint_drain = 0.06
+    stamina_sprint_drain = max(0.02, base_sprint_drain - (skill_levels['stamina_efficiency'] * 0.05))
+
 def can_upgrade_skill(skill_name):
-    level = globals()[f'skill_{skill_name}']; 
-    if level >= 3: return False
-    return skill_points >= SKILL_COSTS[skill_name][level]
+    """Check if the skill can be upgraded (not maxed and enough points)."""
+    level = skill_levels[skill_name]
+    if level >= len(SKILL_COSTS[skill_name]):  # Already max
+        return False
+    cost = SKILL_COSTS[skill_name][level]
+    return skill_points >= cost
+
+
 def upgrade_skill(skill_name):
-    global skill_points, player_health
-    if not can_upgrade_skill(skill_name): return False
-    level = globals()[f'skill_{skill_name}']; cost = SKILL_COSTS[skill_name][level]
-    globals()[f'skill_{skill_name}'] += 1; skill_points -= cost; apply_skill_effects()
-    if skill_name == 'health_boost': player_health = player_max_health
+    """Upgrade a skill if possible, reducing skill points."""
+    global skill_points, player_health, player_max_health
+    if not can_upgrade_skill(skill_name):
+        return False
+
+    level = skill_levels[skill_name]
+    cost = SKILL_COSTS[skill_name][level]
+    skill_levels[skill_name] += 1
+    skill_points -= cost
+
+    # Immediately apply the stat changes from the new skill level.
+    apply_skill_effects()
+
+    # If the upgraded skill was health_boost, set health to full.
+    if skill_name == 'health_boost':
+        player_health = player_max_health
+        
     return True
+
+def activate_temp_skill(skill_name):
+    """Activate a temporary skill (2 mins) if enough points and not already active."""
+    global skill_points
+    skill = temp_skills[skill_name]
+    if skill_points >= skill["cost"] and not skill["active"]:
+        skill_points -= skill["cost"]
+        skill["active"] = True
+        skill["duration"] = 120 * 60  # 2 mins in frames (if 60 FPS)
+        return True
+    return False
+
+
+def update_temp_skills():
+    """Reduce duration of temporary skills each frame."""
+    for skill in temp_skills.values():
+        if skill["active"]:
+            skill["duration"] -= 1
+            if skill["duration"] <= 0:
+                skill["active"] = False
+
+
 def get_evade_cost():
     return max(15, stamina_evade_cost - (skill_stamina_efficiency * 5))
 def can_evade():
@@ -589,7 +814,7 @@ def get_weapon_damage():
     if special_ability_active and current_special == "DAMAGE_BOOST": base_damage *= 2.5
     return int(base_damage)
 def get_evade_cooldown():
-    return max(20, EVADE_COOLDOWN_MAX - (skill_faster_evasion * 12))
+    return max(30, EVADE_COOLDOWN_MAX - (skill_faster_evasion * 12))
 def get_evade_distance():
     return EVADE_DISTANCE_BASE + (skill_faster_evasion * 20)
 def charge_special_ability(amount):
@@ -606,7 +831,7 @@ def activate_special_ability():
     if not can_use_special_ability(): return
     if current_special == "TELEPORT": do_teleport(); special_ability_meter = 0; return
     special_ability_active = True
-    durations = {"TIME_SLOW": 3600, "SHIELD_BUBBLE": 3600, "DAMAGE_BOOST": 3600, }
+    durations = {"TIME_SLOW": 3600, "SHIELD_BUBBLE": 3600, "DAMAGE_BOOST": 3600 }
     special_ability_timer = durations.get(current_special, 3600); special_ability_meter = 0
 def update_special_ability():
     global special_ability_active, special_ability_timer
@@ -614,15 +839,15 @@ def update_special_ability():
         special_ability_timer -= 1
         if special_ability_timer <= 0: special_ability_active = False
 def cycle_special_ability():
-    global current_special
+    global current_special, SPECIAL_ABILITIES
     idx = (SPECIAL_ABILITIES.index(current_special) + 1) % len(SPECIAL_ABILITIES); current_special = SPECIAL_ABILITIES[idx]
 def start_next_wave():
     global current_wave, enemies_per_wave, enemy_bullet_speed_multiplier, boss
     current_wave += 1
-    if current_wave > 0 and current_wave % 5 == 0:
+    if current_wave > 0 and current_wave % 1 == 0:
         boss = Boss()
     else:
-        enemies_per_wave = min(5, 2 + (current_wave - 1) // 2)
+        enemies_per_wave = min(10, 2 + (current_wave - 1) // 2)
         enemy_bullet_speed_multiplier = min(3.0, 1.0 + (current_wave - 1) * 0.1)
         for _ in range(enemies_per_wave):
             spawn_enemy()
@@ -632,13 +857,13 @@ def spawn_obstacles(count):
     global obstacles
     obstacles = []
     for _ in range(count):
-        size = random.uniform(40, 80)
+        size = random.uniform(40, 150)
         pos = [
             random.uniform(-ARENA_WIDTH + size, ARENA_WIDTH - size),
             random.uniform(-ARENA_HEIGHT + size, ARENA_HEIGHT - size),
             random.uniform(ARENA_DEPTH * 0.2, ARENA_DEPTH * 0.8)
         ]
-        type = 'DESTRUCTIBLE' if random.random() < 0.5 else 'PUSHABLE'
+        type = 'DESTRUCTIBLE' if random.random() < 0.5 else 'INDESTRUCTIBLE'
         obstacles.append(Obstacle(pos, size, type))
 
 def update_enemies_and_bullets():
@@ -652,15 +877,14 @@ def update_enemies_and_bullets():
     for asteroid in asteroids[:]:
         if not asteroid.active: asteroids.remove(asteroid)
         else: asteroid.update()
-    # --- NEW: Update and clean up obstacles ---
+    # --- Update and clean up obstacles ---
     for obstacle in obstacles[:]:
-        if not obstacle.active: obstacles.remove(obstacle)
-        else: obstacle.update()
+        obstacle.update()
 def check_collisions():
     global player_health,player_flash_timer
     for bullet in bullets[:]:
         if not bullet.active: continue
-        # Check against obstacles first
+        # OBSTACLE COLLISION
         for obstacle in obstacles:
             if not obstacle.active: continue
             # Simple sphere vs cube (AABB) check
@@ -673,7 +897,7 @@ def check_collisions():
                 bullet.active = False
                 break
         if not bullet.active: continue
-        # --- FIX: ADD THE MISSING ENEMY COLLISION LOOP HERE ---
+        # ENEMY COLLISION 
         for enemy in enemies:
             if not enemy.active: continue
             dist_sq = (bullet.pos[0] - enemy.pos[0])**2 + (bullet.pos[1] - enemy.pos[1])**2 + (bullet.pos[2] - enemy.pos[2])**2
@@ -681,49 +905,27 @@ def check_collisions():
                 enemy.take_damage(bullet.damage)
                 bullet.active = False
                 break
-        # ---------------------------------------------------------
-
-        if not bullet.active: continue # Make sure this line is also here
+     
+        # BOSS COLLISION
+        if not bullet.active: continue 
         if boss and boss.active:
             dist_sq = (bullet.pos[0] - boss.pos[0])**2 + (bullet.pos[1] - boss.pos[1])**2 + (bullet.pos[2] - boss.pos[2])**2
             if dist_sq < (bullet.radius + boss.radius)**2:
                 boss.take_damage(bullet.damage); bullet.active = False
 
-    # --- Player vs. Obstacles ---
-    player_size = player_radius
-    for obstacle in obstacles:
-        if (abs(player_pos[0] - obstacle.pos[0]) < obstacle.size/2 + player_size and
-            abs(player_pos[1] - obstacle.pos[1]) < obstacle.size/2 + player_size and
-            abs(player_pos[2] - obstacle.pos[2]) < obstacle.size/2 + player_size):
-            
-            if obstacle.type == 'PUSHABLE':
-                # Nudge the obstacle away from the player
-                dx, dy, dz = obstacle.pos[0]-player_pos[0], obstacle.pos[1]-player_pos[1], obstacle.pos[2]-player_pos[2]
-                dist = math.sqrt(dx**2+dy**2+dz**2)
-                if dist > 0:
-                    obstacle.velocity[0] += (dx/dist) * 2.0
-                    obstacle.velocity[1] += (dy/dist) * 2.0
-            
-            elif obstacle.type == 'DESTRUCTIBLE':
-                # Don't let player pass through, push them back slightly
-                dx, dy, dz = player_pos[0]-obstacle.pos[0], player_pos[1]-obstacle.pos[1], player_pos[2]-obstacle.pos[2]
-                dist = math.sqrt(dx**2+dy**2+dz**2)
-                overlap = (obstacle.size/2 + player_size) - dist
-                if dist > 0:
-                    player_pos[0] += (dx/dist) * overlap
-                    player_pos[1] += (dy/dist) * overlap
 
     # --- Enemy Projectiles vs. Obstacles ---
-    for proj in enemy_bullets + asteroids:
-        if not proj.active: continue
+    for proj in enemy_bullets:
+        if not proj.active or proj.type=="WALL": continue
         for obstacle in obstacles:
             if (abs(proj.pos[0] - obstacle.pos[0]) < obstacle.size/2 + proj.radius and
                 abs(proj.pos[1] - obstacle.pos[1]) < obstacle.size/2 + proj.radius and
                 abs(proj.pos[2] - obstacle.pos[2]) < obstacle.size/2 + proj.radius):
                 proj.active = False
                 break
+
     
-    # --- Player Damage Logic (existing logic) ---
+    # --- Player Damage  ---
 
     invincible = (special_ability_active and current_special in [ "SHIELD_BUBBLE"]) or INVINCIBLE_MODE
     if not invincible:
@@ -733,56 +935,123 @@ def check_collisions():
                 dist_sq = (bullet.pos[0] - player_pos[0])**2 + (bullet.pos[1] - player_pos[1])**2 + (bullet.pos[2] - player_pos[2])**2
                 if dist_sq < (bullet.radius + player_radius)**2: 
                     player_health -= bullet.damage; bullet.active = False
-                    trigger_camera_shake(50.0, 40) #<-- ADD THIS LINE
-                    player_flash_timer = 15 #<-- ADD THIS LINE
+                    trigger_camera_shake(50.0, 40) 
+                    player_flash_timer = 15 
             # Asteroids vs player
             for asteroid in asteroids[:]:
                 if not asteroid.active: continue
                 dist_sq = (asteroid.pos[0] - player_pos[0])**2 + (asteroid.pos[1] - player_pos[1])**2 + (asteroid.pos[2] - player_pos[2])**2
                 if dist_sq < (asteroid.radius + player_radius)**2: 
                     player_health -= asteroid.damage; asteroid.active = False
-                    trigger_camera_shake(25.0, 50) #<-- ADD THIS LINE
-                    player_flash_timer = 15 #<-- ADD THIS LINE
-            # Player vs enemies & boss
-            for enemy in enemies:
-                dist_sq = (enemy.pos[0] - player_pos[0])**2 + (enemy.pos[1] - player_pos[1])**2 + (enemy.pos[2] - player_pos[2])**2
-                if dist_sq < (enemy.radius + player_radius)**2: 
-                    player_health -= 30; enemy.active = False; 
-                    player_flash_timer = 15 #<-- ADD THIS LINE
-                    
-                    break
-            if boss and boss.active:
-                dist_sq = (boss.pos[0] - player_pos[0])**2 + (boss.pos[1] - player_pos[1])**2 + (boss.pos[2] - player_pos[2])**2
-                if dist_sq < (boss.radius + player_radius)**2: 
-                    player_health -= 50
-                    trigger_camera_shake(30.0, 100) #<-- ADD THIS LINE
-                    player_flash_timer = 15 #<-- ADD THIS LINE
+                    trigger_camera_shake(25.0, 50) 
+                    player_flash_timer = 15 
+
 def update_bullets():
     for bullet in bullets[:]:
         if not bullet.active: bullets.remove(bullet); continue
         bullet.update()
+
+
 def load_high_scores():
-    global high_scores; high_scores = []
-    if not os.path.exists(HIGHSCORE_FILE): return
+    """
+    Loads high scores from a file. If the file doesn't exist,
+    it creates one with default placeholder scores.
+    """
+    global high_scores
+    high_scores = []
+
+    # --- New Section: Create the file if it doesn't exist ---
+    if not os.path.exists(HIGHSCORE_FILE):
+        print("High score file not found. Creating a new one.")
+        try:
+            # Create a default list of scores to populate the new file
+            default_scores = [
+                (1000, "Zarif", "2025-01-01", 5),
+            ]
+            
+            # Open the new file in 'write' mode ('w')
+            with open(HIGHSCORE_FILE, 'w') as f:
+                # Write each default score to the file
+                for score, name, date, level in default_scores:
+                    f.write(f"{score}|{name}|{date}|{level}\n")
+            
+            # Set the current high_scores list to our defaults
+            high_scores = default_scores
+            return # Exit the function since we've created and loaded the scores
+
+        except Exception as e:
+            print(f"Error creating high score file: {e}")
+            return # Stop if we can't create the file
+    # -----------------------------------------------------------
+
+    # --- Original Loading Logic (runs if the file already exists) ---
     try:
         with open(HIGHSCORE_FILE, 'r') as f:
             for line in f:
-                parts = line.strip().split('|');
-                if len(parts) >= 4: high_scores.append((int(parts[0]), parts[1], parts[2], int(parts[3])))
-        high_scores.sort(key=lambda x: x[0], reverse=True); high_scores = high_scores[:max_highscores]
-    except Exception as e: print(f"Error loading high scores: {e}")
+                parts = line.strip().split('|')
+                if len(parts) >= 4:
+                    score = int(parts[0])
+                    name = parts[1]
+                    date = parts[2]
+                    level = int(parts[3])
+                    high_scores.append((score, name, date, level))
+        
+        # Sort and trim the list after loading
+        high_scores.sort(key=lambda x: x[0], reverse=True)
+        high_scores = high_scores[:max_highscores]
+
+    except Exception as e:
+        print(f"Error loading high scores: {e}")
+
 def save_high_score(score, name):
-    global high_scores; current_date = datetime.now().strftime("%Y-%m-%d")
-    high_scores.append((score, name, current_date, player_level))
-    high_scores.sort(key=lambda x: x[0], reverse=True); high_scores = high_scores[:max_highscores]
+    """
+    Adds a new score to the list and saves the updated list to a file.
+    """
+    global high_scores
+
+    # Get today's date in a "YYYY-MM-DD" format
+    current_date = datetime.now().strftime("%Y-%m-%d")
+
+    # Create the new entry and add it to our list
+    new_entry = (score, name, current_date, player_level)
+    high_scores.append(new_entry)
+
+    # Define a function to get the score, which we'll use for sorting
+    def get_score(score_entry):
+        return score_entry[0]
+        
+    # Sort the list again to place the new score correctly
+    high_scores.sort(key=get_score, reverse=True)
+
+    # Keep only the top scores
+    high_scores = high_scores[:max_highscores]
+
     try:
+        # Open the file to write the new high score list
         with open(HIGHSCORE_FILE, 'w') as f:
-            for s, n, d, l in high_scores: f.write(f"{s}|{n}|{d}|{l}\n")
-    except Exception as e: print(f"Error saving high scores: {e}")
+            # Write each high score entry to a new line in the file
+            for entry in high_scores:
+                s, n, d, l = entry # Unpack the tuple for clarity
+                f.write(f"{s}|{n}|{d}|{l}\n")
+
+    except Exception as e:
+        # If there's an error saving, print a message
+        print(f"Error saving high scores: {e}")
+
 def is_high_score(score):
-    if len(high_scores) < max_highscores: return True
-    if not high_scores: return True
-    return score > high_scores[-1][0]
+    """
+    Checks if a new score is high enough to make the high score list.
+    """
+    # 1. If the high score board isn't full, any new score is a high score.
+    if len(high_scores) < max_highscores:
+        return True
+
+    # 2. If the board is full, check against the lowest score on the list.
+    # Since the list is sorted, the last item is the lowest score.
+    lowest_high_score = high_scores[-1][0] 
+    
+    # Return True if the new score is better than the lowest high score.
+    return score > lowest_high_score
 def update_stamina():
     global stamina_level, fatigued, is_sprinting
     if is_sprinting and stamina_level > 0: stamina_level -= stamina_sprint_drain
@@ -804,79 +1073,118 @@ def gain_experience(points):
         experience_points -= experience_to_next_level; player_level += 1; skill_points += 1
         experience_to_next_level = int(experience_to_next_level * 1.2)
 # Replace the ENTIRE fire_weapon() function with this new version
-def fire_weapon():
+def fire_weapon_simplified():
+    """
+    Fires a bullet from the ship.
+
+    This function uses a two-step process:
+    1. Raycast from the camera through the crosshair to identify the true target.
+    2. Fire an actual bullet from the ship's nose directly at that target's center.
+    This ensures the player's shots are accurate to what they see.
+    """
     global weapon_cooldown, heat_level, overheated, bullets
-    if weapon_cooldown > 0 or overheated: return
     
-    # --- Step 1: Define the Ray from the CAMERA's perspective ---
-    # The origin of our aiming ray is now the camera's current position
-    ray_origin = camera_pos 
-    
-    # The direction is from the camera towards the 3D crosshair
-    dir_x = crosshair_pos[0] - ray_origin[0]
-    dir_y = crosshair_pos[1] - ray_origin[1]
-    dir_z = crosshair_pos[2] - ray_origin[2]
-    dist = math.sqrt(dir_x**2 + dir_y**2 + dir_z**2)
-    ray_dir = [dir_x/dist, dir_y/dist, dir_z/dist] if dist > 0 else [0,0,1]
-    
-    # --- Step 2: Find the closest object intersecting this new ray ---
-    target_object = None
-    min_dist = float('inf')
+    # Don't fire if the weapon is on cooldown or has overheated.
+    if weapon_cooldown > 0 or overheated:
+        return
 
-    # Raycast against destructible obstacles
-    for obstacle in obstacles:
-        if not obstacle.active or obstacle.type != 'DESTRUCTIBLE': continue
-        oc = [obstacle.pos[0] - ray_origin[0], obstacle.pos[1] - ray_origin[1], obstacle.pos[2] - ray_origin[2]]
-        t = oc[0]*ray_dir[0] + oc[1]*ray_dir[1] + oc[2]*ray_dir[2]
-        if t < 0: continue
-        closest_point_on_ray = [ray_origin[0] + t*ray_dir[0], ray_origin[1] + t*ray_dir[1], ray_origin[2] + t*ray_dir[2]]
-        dist_to_ray_sq = (obstacle.pos[0]-closest_point_on_ray[0])**2 + (obstacle.pos[1]-closest_point_on_ray[1])**2 + (obstacle.pos[2]-closest_point_on_ray[2])**2
-        if dist_to_ray_sq < (obstacle.size * 0.75)**2:
-            object_dist = math.sqrt(oc[0]**2 + oc[1]**2 + oc[2]**2)
-            if object_dist < min_dist:
-                min_dist = object_dist; target_object = obstacle
+    # === Step 1: Determine what the player is aiming at from the camera's view. ===
     
-    # Raycast against boss and enemies
-    all_targets = ([boss] if boss and boss.active else []) + enemies
-    for target in all_targets:
-        if not target.active: continue
-        oc = [target.pos[0] - ray_origin[0], target.pos[1] - ray_origin[1], target.pos[2] - ray_origin[2]]
-        t = oc[0]*ray_dir[0] + oc[1]*ray_dir[1] + oc[2]*ray_dir[2]
-        if t < 0: continue
-        closest_point_on_ray = [ray_origin[0] + t*ray_dir[0], ray_origin[1] + t*ray_dir[1], ray_origin[2] + t*ray_dir[2]]
-        dist_to_ray_sq = (target.pos[0]-closest_point_on_ray[0])**2 + (target.pos[1]-closest_point_on_ray[1])**2 + (target.pos[2]-closest_point_on_ray[2])**2
-        if dist_to_ray_sq < target.radius**2:
-            object_dist = math.sqrt(oc[0]**2 + oc[1]**2 + oc[2]**2)
-            if object_dist < min_dist:
-                min_dist = object_dist; target_object = target
+    # Define the "line of sight" ray, starting from the camera.
+    aiming_ray_origin = camera_pos
     
-    # --- Step 3: Fire the bullet from the SHIP towards the TRUE target ---
+    # Calculate the direction from the camera to the 3D crosshair.
+    vector_to_crosshair = [
+        crosshair_pos[0] - aiming_ray_origin[0],
+        crosshair_pos[1] - aiming_ray_origin[1],
+        crosshair_pos[2] - aiming_ray_origin[2]
+    ]
+    distance = math.sqrt(sum(coord**2 for coord in vector_to_crosshair))
+    
+    # Normalize the direction vector (make its length 1) for calculations.
+    aiming_ray_direction = [coord / distance for coord in vector_to_crosshair] if distance > 0 else [0, 0, 1]
+
+    # === Step 2: Find the closest game object that this aiming ray intersects. ===
+
+    closest_hit_object = None
+    min_distance_to_object = float('inf')
+    
+    # Combine all potential targets into one list for easier checking.
+    all_possible_targets = ([boss] if boss and boss.active else []) + enemies
+    all_possible_targets += [obs for obs in obstacles if obs.active and obs.type == 'DESTRUCTIBLE']
+
+    for target in all_possible_targets:
+        # This is a simplified ray-sphere intersection check.
+        # It determines if our aiming ray passes through the target's hitbox.
+        vector_to_target = [
+            target.pos[0] - aiming_ray_origin[0],
+            target.pos[1] - aiming_ray_origin[1],
+            target.pos[2] - aiming_ray_origin[2]
+        ]
+        
+        # Project the target's vector onto the ray's direction.
+        dot_product = sum(v * d for v, d in zip(vector_to_target, aiming_ray_direction))
+        
+        # If the dot product is negative, the target is behind the camera.
+        if dot_product < 0:
+            continue
+            
+        # Find the closest point on the ray to the target's center.
+        closest_point_on_ray = [origin + dot_product * direction for origin, direction in zip(aiming_ray_origin, aiming_ray_direction)]
+        
+        # Calculate the squared distance from the target's center to that point on the ray.
+        distance_from_target_to_ray_sq = sum((p1 - p2)**2 for p1, p2 in zip(target.pos, closest_point_on_ray))
+        
+        # Use a generic 'hitbox_radius' for checking collision.
+        hitbox_radius = getattr(target, 'radius', getattr(target, 'size', 1) * 0.75)
+
+        # If the distance is less than the hitbox radius, we have a hit!
+        if distance_from_target_to_ray_sq < hitbox_radius**2:
+            distance_from_camera = math.sqrt(sum(v**2 for v in vector_to_target))
+            
+            # Check if this hit is the closest one we've found so far.
+            if distance_from_camera < min_distance_to_object:
+                min_distance_to_object = distance_from_camera
+                closest_hit_object = target
+
+    # === Step 3: Fire the bullet from the SHIP towards the identified target. ===
+
+    # The bullet originates from the nose of the player's ship.
     nose_offset = 20.0
-    start_pos = list(player_pos)
-    start_pos[2] += nose_offset 
+    bullet_start_position = list(player_pos)
+    bullet_start_position[2] += nose_offset # Adjust for the ship's nose.
 
-    final_vector = [0,0,0]
-    if target_object:
-        # If we have a target, aim the ship's bullet directly at its center
-        dir_x_t = target_object.pos[0] - start_pos[0]
-        dir_y_t = target_object.pos[1] - start_pos[1]
-        dir_z_t = target_object.pos[2] - start_pos[2]
-        dist_t = math.sqrt(dir_x_t**2 + dir_y_t**2 + dir_z_t**2)
-        if dist_t > 0: final_vector = [dir_x_t/dist_t, dir_y_t/dist_t, dir_z_t/dist_t]
+    # Now, determine the bullet's final travel direction.
+    final_bullet_vector = [0, 0, 1] # Default to firing straight ahead.
+
+    if closest_hit_object:
+        # If we hit a target, aim the bullet directly at its center.
+        vector_to_final_target = [
+            closest_hit_object.pos[0] - bullet_start_position[0],
+            closest_hit_object.pos[1] - bullet_start_position[1],
+            closest_hit_object.pos[2] - bullet_start_position[2]
+        ]
     else:
-        # If no target was hit, just fire from the ship towards the crosshair
-        dir_x_t = crosshair_pos[0] - start_pos[0]
-        dir_y_t = crosshair_pos[1] - start_pos[1]
-        dir_z_t = crosshair_pos[2] - start_pos[2]
-        dist_t = math.sqrt(dir_x_t**2 + dir_y_t**2 + dir_z_t**2)
-        if dist_t > 0: final_vector = [dir_x_t/dist_t, dir_y_t/dist_t, dir_z_t/dist_t]
+        # If we aimed at empty space, aim the bullet towards the crosshair's location.
+        vector_to_final_target = [
+            crosshair_pos[0] - bullet_start_position[0],
+            crosshair_pos[1] - bullet_start_position[1],
+            crosshair_pos[2] - bullet_start_position[2]
+        ]
+        
+    # Normalize the final vector before creating the bullet.
+    distance_to_target = math.sqrt(sum(coord**2 for coord in vector_to_final_target))
+    if distance_to_target > 0:
+        final_bullet_vector = [coord / distance_to_target for coord in vector_to_final_target]
 
-    bullets.append(Bullet(start_pos, final_vector))
+    # Create the bullet and add it to the game world.
+    bullets.append(Bullet(bullet_start_position, final_bullet_vector))
 
-    # --- Cooldown and Heat Logic (Unchanged) ---
-    weapon_cooldown = max(5, max_weapon_cooldown - (skill_weapon_power * 2))
-    heat_level += heat_per_shot * (1 - skill_heat_management * 0.15)
-    if heat_level >= heat_max: overheated = True
+    # --- Cooldown and Heat Logic  ---
+    weapon_cooldown = max(5, max_weapon_cooldown - (skill_levels['weapon_power'] * 2))
+    heat_level += heat_per_shot * (1 - skill_levels['heat_management'] * 0.15)
+    if heat_level >= heat_max:
+        overheated = True
     charge_special_ability(5)
 # =============================
 # Drawing Functions
@@ -993,7 +1301,7 @@ def draw_3d_player():
     glTranslatef(player_pos[0], player_pos[1], player_pos[2])
     glRotatef(-90,0,1,0)
 
-    # --- NEW: Aiming Rotation Logic ---
+    # --- Aiming Rotation Logic ---
     # Calculate direction vector from player to crosshair
     dir_x = crosshair_pos[0] - player_pos[0]
     dir_y = crosshair_pos[1] - player_pos[1]
@@ -1040,7 +1348,7 @@ def draw_boss_health_bar():
     glColor3f(*health_color)
     draw_text(350, 700, f"HIVE OVERLORD: {health_percentage}%")
 def draw_enhanced_hud():
-    # --- Health, Stamina, and Heat Bars (No Changes) ---
+    # --- Health, Stamina, and Heat Bars  ---
     health_color = NEON_GREEN if (player_health / player_max_health) > 0.6 else ENERGY_YELLOW if (player_health / player_max_health) > 0.3 else WARNING_RED
     draw_bar(15, 750, 200, 25, player_health, player_max_health, health_color, f"HULL: {int(player_health)}")
     stamina_color = NEON_CYAN if not fatigued else WARNING_RED
@@ -1050,10 +1358,10 @@ def draw_enhanced_hud():
     if overheated:
         pulse = 0.5 + 0.5 * math.sin(game_time * 0.2); glColor3f(1.0, pulse * 0.2, 0.0); draw_text(180, 675, "OVERHEATED!")
 
-    # --- Score (No Changes) ---
+    # --- Score  ---
     glColor3f(*ENERGY_YELLOW); draw_text(400, 750, f"SCORE: {current_score}")
 
-    # --- NEW: Special Ability Bar (Bottom-Right) ---
+    # --- Special Ability Bar (Bottom-Right) ---
     special_color = NEON_PINK
     bar_label = f"SPECIAL: {int(special_ability_meter)}"
     if special_ability_meter >= special_ability_max:
@@ -1061,7 +1369,7 @@ def draw_enhanced_hud():
     draw_bar(720, 60, 200, 20, special_ability_meter, special_ability_max, special_color, bar_label)
     glColor3f(0.8,0.8,0.8); draw_text(710, 10, f"'{current_special.replace('_', ' ')}' selected (T)")
 
-    # --- Active Ability Text (No Changes) ---
+    # --- Active Ability Text ) ---
     if special_ability_active:
         pulse = 0.7 + 0.3 * math.sin(game_time * 0.2); glColor3f(pulse, 0.2, pulse); secs_left = int(special_ability_timer / 60) + 1
         draw_text(320, 100, f"{current_special.replace('_', ' ')} ACTIVE: {secs_left}s")
@@ -1072,7 +1380,7 @@ def draw_enhanced_hud():
     draw_text(350, 10, f"EXP: [{'#' * int(exp_ratio * 20):<20}]")
     glColor3f(1,1,1); draw_text(10, 10, f"CAM: {camera_mode}") #<-- MOVED to bottom-left
 
-    # --- Top-Right Buttons (No Changes) ---
+    # --- Top-Right Buttons  ---
     draw_button(800, 750, 100, 40, "PAUSE"); draw_button(910, 750, 80, 40, "EXIT")
 def draw_game_over_screen():
     global high_scores
@@ -1094,36 +1402,67 @@ def draw_game_over_screen():
             y_pos -= 40
         glColor3f(1,1,1); draw_text(410, 250, "Press R to Restart")
 def draw_skill_menu():
-    global game_state
-    glColor3f(0.1, 0.1, 0.2); glBegin(GL_QUADS)
-    glVertex3f(200, 150, 0); glVertex3f(800, 150, 0); glVertex3f(800, 650, 0); glVertex3f(200, 650, 0); glEnd()
-    glColor3f(*NEON_CYAN); draw_text(380, 600, "--- SKILL UPGRADES ---")
-    glColor3f(*ENERGY_YELLOW); draw_text(220, 560, f"Level: {player_level} | Skill Points: {skill_points}")
-    skill_names = ['1. MOBILITY BOOST for 2 mins (1 PT)', '2. WEAPON MASTERY for 2 mins (1 PT) ', '3. FASTER EVASION', '4. WEAPON POWER', '5. HEAT MANAGEMENT', '6. STAMINA EFFICIENCY', '7. HEALTH BOOST AND RESTORE']
-    skill_vars = [None, None, 'skill_faster_evasion', 'skill_weapon_power', 'skill_heat_management', 'skill_stamina_efficiency', 'skill_health_boost']
+    """Draw the skill menu with temporary and permanent skills."""
+    glColor3f(0.1, 0.1, 0.2)
+    glBegin(GL_QUADS)
+    glVertex3f(200, 150, 0)
+    glVertex3f(800, 150, 0)
+    glVertex3f(800, 650, 0)
+    glVertex3f(200, 650, 0)
+    glEnd()
+
+    glColor3f(*NEON_CYAN)
+    draw_text(380, 600, "--- SKILL UPGRADES ---")
+    glColor3f(*ENERGY_YELLOW)
+    draw_text(220, 560, f"Skill Points: {skill_points}")
+
     y_pos = 500
-    for i in range(len(skill_names)):
-        if i < 2:
-            color = NEON_GREEN if skill_points >= 1 else (0.7,0.7,0.7)
-            glColor3f(*color); draw_text(220, y_pos, skill_names[i])
+
+    # --- Temporary Skills ---
+    for name, data in temp_skills.items():
+        if data["active"]:
+            color = NEON_PINK
+            status = "[ACTIVE]"
+        elif skill_points >= data["cost"]:
+            color = NEON_GREEN
+            status = f"(Cost: {data['cost']})"
         else:
-            level = globals()[skill_vars[i]]
-            can_up = can_upgrade_skill(skill_vars[i].replace('skill_', ''))
-            color = NEON_GREEN if can_up else (0.7, 0.7, 0.7)
-            if level >= 3: color = NEON_PINK
-            glColor3f(*color)
-            cost_text = ""
-            if level < 3: cost = SKILL_COSTS[skill_vars[i].replace('skill_', '')][level]; cost_text = f"(Cost: {cost})"
-            level_display = "MAX" if level >= 3 else f"{level}/3"
-            draw_text(220, y_pos, f"{skill_names[i]} [{level_display}] {cost_text}")
+            color = (0.7, 0.7, 0.7)
+            status = "(Locked)"
+
+        glColor3f(*color)
+        label = "Mobility Boost (2 mins)" if name == "mobility_boost" else "Weapon Mastery (2 mins)"
+        draw_text(220, y_pos, f"{label} {status}")
         y_pos -= 40
-    glColor3f(1,1,1); draw_text(350, 200, "Press 'V' to close menu")
+
+    # --- Permanent Skills ---
+    for name, costs in SKILL_COSTS.items():
+        level = skill_levels[name]
+        if level >= len(costs):
+            color = NEON_PINK
+            status = f"[MAXED] ({level}/{len(costs)})"
+        elif can_upgrade_skill(name):
+            color = NEON_GREEN
+            cost = costs[level]
+            status = f"[{level}/{len(costs)}] (Cost: {cost})"
+        else:
+            color = (0.7, 0.7, 0.7)
+            cost = costs[level]
+            status = f"[{level}/{len(costs)}] (Need {cost})"
+
+        glColor3f(*color)
+        draw_text(220, y_pos, f"{name.replace('_', ' ').title()} {status}")
+        y_pos -= 40
+
+    glColor3f(1, 1, 1)
+    draw_text(350, 200, "Press 'V' to close menu")
+
 # =============================
 # Input & Main Loop
 # =============================
-# ... (The rest of the main loop, input, and setup functions are preserved from the previous version)
+
 def specialKeyListener(key, x, y):
-    # This function now handles AIMING with the Arrow Keys
+    # AIMING with the Arrow Keys
     global crosshair_move_y_timer, crosshair_move_y_dir, crosshair_move_x_timer, crosshair_move_x_dir
 
     if key == GLUT_KEY_UP:
@@ -1135,7 +1474,7 @@ def specialKeyListener(key, x, y):
     elif key == GLUT_KEY_RIGHT:
         crosshair_move_x_timer = INPUT_TIMEOUT; crosshair_move_x_dir = -1
 def keyboardListener(key, x, y):
-    # This function now handles CAMERA controls with IJKL
+    # CAMERA controls with IJKL and other controls
     global player_name, name_input_mode, is_sprinting, fatigued, game_state, camera_mode, player_move_y_timer, player_move_y_dir, player_move_x_timer, player_move_x_dir, fire_timer, skill_points, mobility_boost_active, mobility_boost_timer, weapon_mastery_active, weapon_mastery_timer, is_evading, evade_timer, evade_direction, camera_angle, camera_height
     
     if game_state == "GAME_OVER" and name_input_mode:
@@ -1169,7 +1508,7 @@ def keyboardListener(key, x, y):
     elif key == b'd': player_move_x_timer = INPUT_TIMEOUT; player_move_x_dir = -1
     elif key == b' ': fire_timer = INPUT_TIMEOUT
     
-    # --- NEW: Camera Controls on IJKL ---
+    # Camera Controls on IJKL 
     elif key == b'i': camera_height += 5.0
     elif key == b'k': camera_height -= 5.0
     elif key == b'j': camera_angle += 5.0
@@ -1182,8 +1521,8 @@ def keyboardListener(key, x, y):
         if camera_mode == "FOLLOW": camera_mode = "CENTERED"
         elif camera_mode == "CENTERED": camera_mode = "FIRST_PERSON"
         else: camera_mode = "FOLLOW"
-    elif key == b'q' and not is_evading and can_evade(): is_evading = True; evade_timer = EVADE_DURATION; evade_direction = 1; consume_evade_stamina()
-    elif key == b'e' and not is_evading and can_evade(): is_evading = True; evade_timer = EVADE_DURATION; evade_direction = -1; consume_evade_stamina()
+    elif key == b'q' and not is_evading and can_evade(): is_evading = True; evade_timer = EVADE_DURATION; evade_direction = 1; consume_evade_stamina(); trigger_camera_shake(30,20)
+    elif key == b'e' and not is_evading and can_evade(): is_evading = True; evade_timer = EVADE_DURATION; evade_direction = -1; consume_evade_stamina(); trigger_camera_shake(30,20)
     elif key == b'f': activate_special_ability()
     elif key == b't': cycle_special_ability()
     elif key == b'r' and game_state == "GAME_OVER" and not name_input_mode: game_state = "START_MENU"
@@ -1218,7 +1557,7 @@ def reset_game():
     player_name = ""; evade_timer, evade_cooldown, weapon_cooldown = 0, 0, 0
     player_pos = [0.0, 0.0, 0.0]; crosshair_pos = [0.0, 0.0, ARENA_DEPTH - 800]
     apply_skill_effects(); player_health, stamina_level, special_ability_meter = player_max_health, stamina_max, 0
-    spawn_obstacles(10) #<-- ADD THIS LINE (spawns 10 obstacles)
+    spawn_obstacles(20)
     bullets, enemies, enemy_bullets, asteroids = [], [], [], []; boss = None
 def handle_player_death():
     global game_state, name_input_mode, player_name
@@ -1228,7 +1567,7 @@ def handle_player_death():
         else: load_high_scores()
 def idle():
     global game_time, weapon_cooldown, heat_level, overheated, evade_timer, is_evading, evade_cooldown, player_pos, spawn_timer, player_move_y_timer, player_move_x_timer, crosshair_move_y_timer, crosshair_move_x_timer, fire_timer, mobility_boost_active, mobility_boost_timer, weapon_mastery_active, weapon_mastery_timer, game_state, pre_game_timer, wave_transition_timer, boss,camera_shake_duration,camera_shake_intensity,player_flash_timer
-     # --- NEW: Camera Shake Decay Logic ---
+     # --- Camera Shake Decay Logic ---
     if camera_shake_duration > 0:
         camera_shake_duration -= 1
         camera_shake_intensity *= 0.9 # Smoothly reduce intensity
@@ -1237,10 +1576,10 @@ def idle():
 
     # ------------------------------------
 
-        # --- NEW: Player Flash Decay Logic ---
+        # --- Player Flash Decay Logic ---
     if player_flash_timer > 0:
         player_flash_timer -= 1
-    # ------------------------------------
+   
 
     if game_state not in ["PLAYING", "PRE_GAME", "WAVE_TRANSITION","RESUMING"]:
         glutPostRedisplay(); return
@@ -1277,7 +1616,7 @@ def idle():
     else: weapon_mastery_active = False
     if game_state == "PLAYING" and len(enemies) == 0 and (not boss or not boss.active):
         game_state = "WAVE_TRANSITION"; wave_transition_timer = WAVE_TRANSITION_DURATION
-        # --- NEW: Time Scale Logic ---
+        # --- Time Scale Logic ---
     global time_scale
     if special_ability_active and current_special == "TIME_SLOW":
         time_scale = 0.4 # Slow down to 40% speed
@@ -1286,7 +1625,7 @@ def idle():
     # -----------------------------
     update_stamina(); update_special_ability(); update_bullets(); update_enemies_and_bullets(); check_collisions(); handle_player_death(); 
     glutPostRedisplay()
-# Replace the entire setupCamera() function with this
+
 def setupCamera():
     glMatrixMode(GL_PROJECTION); glLoadIdentity(); gluPerspective(fovY, 1.25, 0.1, ARENA_DEPTH * 1.5)
     glMatrixMode(GL_MODELVIEW); glLoadIdentity()
@@ -1306,13 +1645,13 @@ def setupCamera():
         cam_x, cam_y, cam_z = player_pos[0] + offset_x, player_pos[1] + camera_height, player_pos[2] + offset_z
         look_at_x, look_at_y, look_at_z = player_pos[0], player_pos[1], player_pos[2] + 50
 
-    # Apply Camera Shake Offsets (works for all modes)
+    # Apply Camera Shake Offsets 
     if camera_shake_duration > 0:
         shake_offset_x = random.uniform(-camera_shake_intensity, camera_shake_intensity)
         shake_offset_y = random.uniform(-camera_shake_intensity, camera_shake_intensity)
         cam_x += shake_offset_x
         cam_y += shake_offset_y
-     # --- NEW: Store the final camera position ---
+     # --- Store the final camera position ---
     global camera_pos
     camera_pos = [cam_x, cam_y, cam_z]
     # -----------------------------------------
@@ -1332,7 +1671,7 @@ def showScreen():
         # if camera_mode != "FIRST_PERSON": # Only draw the player if not in first-person
         draw_3d_player()
         glClear(GL_DEPTH_BUFFER_BIT); draw_crosshair()
-       # --- NEW: Draw Player Damage Flash Border (Replaces old flash) ---
+       # --- Draw Player Damage Flash Border  ---
         if player_flash_timer > 0:
             glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0,1000,0,800)
             glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity()
