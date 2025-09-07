@@ -340,7 +340,7 @@ class EnemyBullet:
 
 class Asteroid:
     def __init__(self, start_pos, target_pos=None):
-        self.pos = start_pos
+        self.pos = list(start_pos)
         self.alive = True
         self.speed = 1.2 * enemy_bullet_speed_multiplier
         self.damage = 20
@@ -603,9 +603,9 @@ class Boss:
         global current_score, skill_points, game_state, wave_transition_timer
         self.flash_timer = 10
         if self.ai_state == "VULNERABLE":
-            damage_multiplier = 2 
+            damage_multiplier = 3 
         else: 
-            damage_multiplier = 3
+            damage_multiplier = 2
         self.health -= amount * damage_multiplier
 
         # Phase 2
@@ -1869,7 +1869,7 @@ def keyboardListener(key, x, y):
         elif camera_mode == "CENTERED": camera_mode = "FIRST_PERSON"
         else: camera_mode = "FOLLOW"
     elif key == b'q' and not is_evading and can_evade(): 
-        s_evading = True
+        is_evading = True
         evade_timer = EVADE_DURATION
         evade_direction = 1
         consume_evade_stamina()
