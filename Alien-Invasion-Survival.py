@@ -176,7 +176,7 @@ MOBILITY_BOOST_MULTIPLIER = 5
 weapon_mastery_active = False
 weapon_mastery_timer = 0
 WEAPON_MASTERY_DURATION = 2 * 60 * 60 
-WEAPON_MASTERY_DAMAGE_MULT = 1.5
+WEAPON_MASTERY_DAMAGE_MULT = 2.5
 
 # --- Enemy AI ---
 enemies = []
@@ -935,9 +935,9 @@ def get_weapon_damage():
     if special_ability_active and current_special == "DAMAGE_BOOST": base_damage *= 2.5
     return int(base_damage)
 def get_evade_cooldown():
-    return max(30, EVADE_COOLDOWN_MAX - (skill_faster_evasion * 12))
+    return EVADE_COOLDOWN_MAX
 def get_evade_distance():
-    return EVADE_DISTANCE_BASE + (skill_faster_evasion * 20)
+    return EVADE_DISTANCE_BASE + (skill_levels['faster_evasion'] * 60)
 def charge_special_ability(amount):
     global special_ability_meter
     if skill_weapon_power >= 3: amount = int(amount * 1.3)
@@ -1634,7 +1634,7 @@ def draw_enhanced_hud():
         health_color = ENERGY_YELLOW  
     else:
         health_color = WARNING_RED
-    draw_bar(15, 750, 200, 25, player_health, player_max_health, health_color, f"HULL: {int(player_health)}")
+    draw_bar(15, 750, 200, 25, player_health, player_max_health, health_color, f"HEALTH: {int(player_health)}")
     if not fatigued:
         stamina_color = NEON_CYAN  
     else:
@@ -1687,6 +1687,26 @@ def draw_enhanced_hud():
     # --- Top-Right Buttons  ---
     draw_button(800, 750, 100, 40, "PAUSE")
     draw_button(910, 750, 80, 40, "EXIT")
+
+    # --- Active Skill Timers ---
+    y_offset = 80  # Starting vertical position for the timers
+
+    # Set the text color to a bright yellow
+    glColor3f(ENERGY_YELLOW[0], ENERGY_YELLOW[1], ENERGY_YELLOW[2])
+
+    # Loop through all the temporary skills
+    for skill, data in temp_skills.items():
+        if data["active"]:
+            # Calculate remaining seconds and format the string
+            seconds_left = data["timer"] / 60.0
+            timer_text = f"{data['name']}: {seconds_left:.1f}s"
+
+            # Draw the text on the right side of the screen
+            draw_text(800, y_offset, timer_text)
+
+            # Move the next timer down
+            y_offset += 30 
+
 def draw_game_over_screen():
     global high_scores
     if name_input_mode:
@@ -1752,12 +1772,12 @@ def draw_skill_menu():
 
         glColor3f(*color)
         if name == "mobility_boost":
-            label = "Mobility Boost (2 mins)"  
+            label = "1 Mobility Boost (2 mins)"  
         else:
-            label = "Weapon Mastery (2 mins)"
+            label = "2 Weapon Mastery (2 mins)"
         draw_text(220, y_pos, f"{label} {status}")
         y_pos -= 40
-
+    num=3
     # --- Permanent Skills ---
     for name, costs in SKILL_COSTS.items():
         level = skill_levels[name]
@@ -1774,8 +1794,9 @@ def draw_skill_menu():
             status = f"[{level}/{len(costs)}] (Need {cost})"
 
         glColor3f(*color)
-        draw_text(220, y_pos, f"{name.replace('_', ' ').title()} {status}")
+        draw_text(220, y_pos, f"{num} {name.replace('_', ' ').title()} {status}")
         y_pos -= 40
+        num+=1
 
     glColor3f(1, 1, 1)
     draw_text(350, 200, "Press 'V' to close menu")
